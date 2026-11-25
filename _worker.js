@@ -466,9 +466,10 @@ export async function handleApi(request, env) {
     /* ===== 多管理员 ===== */
     if (path === '/admin/users' && m === 'GET') {
       if (!(await isAdmin(env, request))) return fail('未授权', 401);
-      let ul2 = [];
-      try { ul2 = (await env.DB.prepare('SELECT id,email,name,is_admin,muted,created_at FROM users ORDER BY id DESC LIMIT 500').bind().all()).results || []; }
-      catch (e) { ul2 = (await env.DB.prepare('SELECT id,email,name,is_admin,created_at FROM users ORDER BY id DESC LIMIT 500').bind().all()).results || []; ul2.forEach((x) => { x.muted = 0; }); }
+      /* 管理员页只给管理员名字：不返回账户码、不返回普通成员、不含未登录访客 */
+      const ul2 = (await env.DB.prepare(
+        'SELECT id,name,is_admin FROM users WHERE is_admin=1 ORDER BY id DESC LIMIT 500'
+      ).bind().all()).results || [];
       return json({ users: ul2 });
     }
     if (path === '/admin/users' && m === 'POST') {

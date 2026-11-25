@@ -339,19 +339,18 @@ body{background-image:
     catch(e){toast(e.message)}
   }
 
-  /* ── 管理员 ── */
+  /* ── 管理员：只显示管理员名字，不显示账户码，不列普通成员 / 未登录访客 ── */
   async function loadUsers(){
     var box=$('#userList');
     try{var r=await api('GET','/admin/users'),list=r.users||[];
-      if(!list.length){box.innerHTML='<p class="empty">还没有注册账号</p>';return}
+      if(!list.length){box.innerHTML='<p class="empty">还没有管理员</p>';return}
       box.innerHTML=list.map(function(u){return ''+
-        '<div class="item"><div class="top"><span class="nm">'+esc(u.name)+'</span>'+
-        '<span class="tag '+(u.is_admin?'approved':'')+'">'+(u.is_admin?'管 理 员':'成 员')+
-        (u.muted?' · 已 禁 言':'')+'</span></div>'+
-        '<p class="tm">'+esc(u.email)+'</p></div>'}).join('');
+        '<div class="item"><div class="top"><span class="nm">'+esc(u.name||'无名')+'</span>'+
+        '<span class="tag approved">管 理 员</span></div></div>'}).join('');
     }catch(e){box.innerHTML='<p class="empty">'+esc(e.message)+'</p>'}
   }
-  /* ── 通 知：所有人可见，管理员可群发 ── */
+  
+/* ── 通 知：所有人可见，管理员可群发 ── */
   async function loadNotice(){
     var box=$('#noticeList');
     try{var r=await api('GET','/announcements'),list=r.announcements||[];
