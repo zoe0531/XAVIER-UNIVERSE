@@ -1,23 +1,9 @@
-# 只有用命令行部署时才需要改这个文件。
-# 用「连接 Git」或「拖拽上传」的话，绑定和变量都在 Cloudflare 网页里设，这里保持原样即可。
-
-name = "xavier-star"
+name = "xavier-universe"
 compatibility_date = "2026-11-25"
 pages_build_output_dir = "."
 
-# 命令行部署才打开下面几行：
-# [[d1_databases]]
-# binding = "DB"                 # 必须叫 DB
-# database_name = "xavier-star"
-# database_id = "在 D1 页面复制"
-#
-# [[r2_buckets]]
-# binding = "BUCKET"             # 选填
-# bucket_name = "xavier-star-media"
+[[d1_databases]]
+binding = "DB"
+database_name = "xavier-db"
+database_id = "33a09500-e1ee-4c14-9e78-325db35f29fb"
 
-# 变量只在 Cloudflare 网页设为加密变量，不要写进公开仓库：
-#   ADMIN_PASSWORD     可选：覆盖站长口令（不填就是你在设置里用的那串，只在服务端）
-#   NOTIFY_WEBHOOK     群机器人 Webhook（企业微信 / 钉钉 / 飞书）
-#   RESEND_API_KEY     Resend 邮件 API Key
-#   NOTIFY_EMAIL_FROM  发件邮箱
-#   NOTIFY_EMAIL_TO    固定收件邮箱（多个逗号分隔）
