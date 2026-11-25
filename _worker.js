@@ -143,14 +143,24 @@ async function notify(env, title, lines) {
   await Promise.allSettled(jobs);
 }
 async function safeNotify(env, title, lines) { try { await notify(env, title, lines); } catch (e) { /* 吞掉 */ } }
-const plain = (t) => String(t || '').replace(/\u2060/g, '').slice(0, 240);
-/* 去重用完整正文，不截断，避免两条长祝福前 240 字相同被误吞 */
-const dedupText = (t) => String(t || '').replace(/\u2060/g, '');
+/* 旧版把「36 进制编号 / 归属标记」用零宽符塞在正文开头，
+   只删零宽符会残留成 "1x张" 这种鬼东西。这里整段前缀一起剥掉，只留真正文。
+   兼容三段式 ‹号›‹o|x›‹正文› 和两段式 ‹号›‹正文›；正常中文不会误命中。 */
+function stripMark(t) {
+  const v = String(t == null ? '' : t);
+  let m = /^\u2060([0-9a-z]+)\u2060([ox])\u2060([\s\S]*)$/i.exec(v);
+  if (m) return m[3];
+  m = /^\u2060([0-9a-z]+)\u2060([\s\S]*)$/i.exec(v);
+  return m ? m[2] : v.replace(/\u2060/g, '');
+}
+const plain = (t) => stripMark(t).slice(0, 240);
+/* 去重用完整纯正文，不截断，避免两条长祝福前 240 字相同被误吞；前缀不同也能认出是同一条 */
+const dedupText = (t) => stripMark(t);
 const when = () => new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
 
 /* ── 行 → 原站格式 ── */
 function row(r) {
-  return { id: r.id, text: r.text || '', name: r.name || '', photo: r.photo || '',
+  return { id: r.id, text: stripMark(r.text), name: r.name || '', photo: r.photo || '',
     created_at: new Date(Number(r.created_at) || Date.now()).toISOString() };
 }
 
@@ -193,7 +203,7 @@ export async function handleApi(request, env) {
         } catch (e) {}
       }
       const text = String(b.text || '');
-      if (!plain(text).trim()) return fail('先写点什么吧');
+      if (!stripMark(text).trim()) return fail('先写点什么吧');
       const name = String(b.name || '').slice(0, 40) || '无名';
       const photo = String(b.photo || '').slice(0, 6000000);
       const now = Date.now();
@@ -205,16 +215,33 @@ export async function handleApi(request, env) {
       const same = (recent.results || []).find((x) =>
         dedupText(x.text) === dedupText(text) && String(x.name || '') === name && String(x.photo || '') === photo);
       if (same) return withCookie(json([row(same)], 200, { 'Cache-Control': 'no-store' }), cookie);
-      const ins = await env.DB.prepare(
-        'INSERT INTO wishes (owner_token,user_id,text,name,photo,status,created_at) VALUES (?,?,?,?,?,?,?)'
-      ).bind(s.token, s.user_id, text, name, photo, 'pending', now).run();
-      const id = ins.meta && ins.meta.last_row_id != null ? ins.meta.last_row_id : null;
-      let created = id != null
-        ? await env.DB.prepare('SELECT id,text,name,photo,created_at FROM wishes WHERE id=?').bind(id).first()
-        : null;
+      /* ── 编号规则 ──
+         只按「全表已有的最大编号 + 1」发号：
+         · 删掉中间一颗 → 其余编号纹丝不动，被删的号永久空着（不补位）
+         · 所有祝福（含待审 / 未通过）全清空 → 最大号没了，下一颗重新从第 1 颗开始
+         · 多人同时写撞了主键就重读最大号再试，绝不丢星、绝不复制出第二颗 */
+      const mx = await env.DB.prepare('SELECT MAX(id) AS m FROM wishes').bind().first();
+      let no = (mx && Number(mx.m) > 0) ? Number(mx.m) + 1 : 1;
+      let ins = null, lastErr = null;
+      for (let attempt = 0; attempt < 4; attempt++) {
+        try {
+          ins = await env.DB.prepare(
+            'INSERT INTO wishes (id,owner_token,user_id,text,name,photo,status,created_at) VALUES (?,?,?,?,?,?,?,?)'
+          ).bind(no, s.token, s.user_id, text, name, photo, 'pending', now).run();
+          break;
+        } catch (e) {
+          lastErr = e;
+          const mx2 = await env.DB.prepare('SELECT MAX(id) AS m FROM wishes').bind().first();
+          no = (mx2 && Number(mx2.m) > 0) ? Number(mx2.m) + 1 : 1;
+        }
+      }
+      if (!ins) throw lastErr || new Error('写入失败');
+      let created = await env.DB.prepare(
+        'SELECT id,text,name,photo,created_at FROM wishes WHERE id=?'
+      ).bind(no).first();
       if (!created) created = await env.DB.prepare(
         'SELECT id,text,name,photo,created_at FROM wishes WHERE owner_token=? AND created_at=? ORDER BY id DESC LIMIT 1'
-      ).bind(s.token, now).first() || { id: now, text, name, photo, created_at: now };
+      ).bind(s.token, now).first() || { id: no, text, name, photo, created_at: now };
       // 通知：有人投稿，等审核
       await safeNotify(env, '收到一条新祝福，待审核',
         [`署名：${name}`, `内容：${plain(text)}`, `时间：${when()}`]);
