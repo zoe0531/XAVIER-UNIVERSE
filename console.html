@@ -1,0 +1,368 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#1a0d40">
+<title>星 宙</title>
+<style>
+/* 沿用星宙主页的紫色星云与浅紫字，不引入任何外部样式 */
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{min-height:100%;color:#fff;
+  font-family:"WenQuanYi Micro Hei","PingFang SC","Microsoft YaHei",sans-serif;
+  background:
+    radial-gradient(58% 38% at 22% 18%,rgba(138,96,222,.40),transparent 72%),
+    radial-gradient(52% 44% at 82% 74%,rgba(86,64,196,.34),transparent 74%),
+    radial-gradient(70% 52% at 58% 46%,rgba(112,72,208,.20),transparent 80%),
+    linear-gradient(180deg,#180b3c,#2b1670 52%,#3a2088);
+  background-attachment:fixed}
+body{padding:calc(env(safe-area-inset-top) + 1.1rem) 1rem calc(env(safe-area-inset-bottom) + 2rem)}
+.wrap{max-width:560px;margin:0 auto}
+.back{display:inline-block;color:rgba(255,255,255,.62);font-size:.74rem;letter-spacing:.22em;text-decoration:none;margin-bottom:1rem}
+.back:hover{color:#fff}
+/* 淡紫 + ins 风：细体大字距、渐变字、柔和光晕，不依赖外部字体文件 */
+h1{font-weight:300;font-size:2.05rem;letter-spacing:.44em;text-indent:.44em;text-align:center;
+  font-family:"Billabong","Grand Hotel","Snell Roundhand","Segoe Script",
+              "PingFang SC","Hiragino Sans GB","WenQuanYi Micro Hei",sans-serif;
+  background:linear-gradient(102deg,#f1e7ff 0%,#d6c3ff 34%,#b9a7ff 66%,#a6dcff 100%);
+  -webkit-background-clip:text;background-clip:text;color:transparent;
+  -webkit-text-fill-color:transparent;
+  filter:drop-shadow(0 0 18px rgba(190,165,255,.55))}
+.kick{text-align:center;font-size:.64rem;letter-spacing:.44em;color:rgba(214,190,255,.72);margin:.45rem 0 1.3rem;text-indent:.44em}
+.card{background:rgba(24,14,64,.62);border:1px solid rgba(185,167,255,.28);border-radius:20px;
+  padding:1.15rem 1.05rem;margin-bottom:.9rem;backdrop-filter:blur(10px);
+  box-shadow:0 16px 46px rgba(8,4,30,.42)}
+.card h2{font-weight:400;font-size:.86rem;letter-spacing:.26em;text-indent:.26em;color:#ffe0b0;margin-bottom:.85rem}
+.tabs{display:flex;gap:.35rem;flex-wrap:wrap;margin-bottom:1rem}
+.tab{background:rgba(255,255,255,.05);border:1px solid rgba(185,167,255,.24);color:rgba(255,255,255,.7);
+  border-radius:999px;padding:.5rem .9rem;font-size:.72rem;letter-spacing:.2em;text-indent:.2em;cursor:pointer}
+.tab.on{background:rgba(185,167,255,.26);border-color:#b9a7ff;color:#fff}
+.tab[hidden]{display:none}
+button{font:inherit;cursor:pointer}
+.btn{background:linear-gradient(120deg,rgba(185,167,255,.30),rgba(142,232,255,.16));
+  border:1px solid rgba(255,217,160,.5);color:#fff6e6;border-radius:999px;
+  padding:.65rem 1.1rem;font-size:.76rem;letter-spacing:.24em;text-indent:.24em}
+.btn.ghost{background:transparent;border-color:rgba(185,167,255,.3);color:rgba(255,255,255,.7)}
+.btn:disabled{opacity:.5}
+input,textarea{width:100%;background:rgba(255,255,255,.06);border:1px solid rgba(185,167,255,.28);
+  border-radius:12px;padding:.7rem .8rem;color:#fff;outline:none;font-size:.84rem;margin-top:.55rem}
+input:focus,textarea:focus{border-color:#b9a7ff}
+input::placeholder,textarea::placeholder{color:rgba(220,210,255,.45)}
+textarea{resize:vertical;line-height:1.65}
+label.f{display:block;font-size:.7rem;letter-spacing:.18em;color:rgba(255,255,255,.65);margin-top:.8rem}
+.row{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;margin-top:.9rem}
+.row .btn{flex:1;min-width:110px}
+.muted{font-size:.72rem;line-height:1.75;color:rgba(255,255,255,.58)}
+.err{color:#ffb3b3;font-size:.74rem;margin-top:.5rem;min-height:1em}
+.ok{color:#a8f0d0;font-size:.74rem;margin-top:.5rem}
+.list{margin-top:.9rem;display:flex;flex-direction:column;gap:.6rem}
+.item{border:1px solid rgba(185,167,255,.18);border-radius:14px;padding:.75rem .85rem;background:rgba(255,255,255,.035)}
+.item .top{display:flex;justify-content:space-between;gap:.5rem;align-items:baseline}
+.item .nm{font-size:.8rem;color:#ffe0b0;letter-spacing:.1em}
+.item .tm{font-size:.62rem;color:rgba(255,255,255,.45)}
+.item .tx{font-size:.8rem;line-height:1.7;margin:.5rem 0 0;white-space:pre-wrap;word-break:break-word}
+.item img{width:100%;max-height:180px;object-fit:cover;border-radius:10px;margin-top:.55rem}
+.item .acts{display:flex;gap:.4rem;flex-wrap:wrap;margin-top:.65rem}
+.chip{background:rgba(255,255,255,.05);border:1px solid rgba(185,167,255,.26);color:#fff;
+  border-radius:999px;padding:.38rem .75rem;font-size:.68rem;letter-spacing:.16em;text-indent:.16em}
+.chip.g{background:transparent;color:rgba(255,255,255,.62)}
+.tag{font-size:.6rem;padding:.14rem .5rem;border-radius:99px;border:1px solid rgba(185,167,255,.3);color:rgba(255,255,255,.6)}
+.tag.pending{color:#ffd9a0;border-color:rgba(255,217,160,.5)}
+.tag.approved{color:#8ee8ff;border-color:rgba(142,232,255,.5)}
+.tag.rejected{color:#ff9c9c;border-color:rgba(255,156,156,.5)}
+.pick{display:inline-flex;align-items:center;gap:.35rem;font-size:.7rem;color:rgba(255,255,255,.65)}
+.pick input{width:auto;margin:0;accent-color:#b9a7ff}
+.empty{text-align:center;color:rgba(255,255,255,.45);font-size:.76rem;letter-spacing:.14em;padding:1.5rem 0}
+.toast{position:fixed;left:50%;bottom:calc(env(safe-area-inset-bottom) + 1.6rem);transform:translateX(-50%);
+  background:rgba(24,14,64,.96);border:1px solid rgba(185,167,255,.4);border-radius:999px;
+  padding:.6rem 1.2rem;font-size:.74rem;letter-spacing:.14em;color:#fff3dd;white-space:nowrap;z-index:20}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <a class="back" href="./">← 回 星 宙</a>
+  <h1>星 宙</h1>
+  <p class="kick">XAVIER'S UNIVERSE</p>
+
+  <!-- 登录 -->
+  <div class="card" id="authCard">
+    <h2 id="authTitle">登 录</h2>
+    <label class="f">邮箱<input id="email" type="email" autocomplete="email" placeholder="邮 箱"></label>
+    <label class="f" id="nameRow" hidden>名字<input id="regName" type="text" maxlength="20" placeholder="填入名称"></label>
+    <label class="f">密码<input id="password" type="password" autocomplete="current-password" placeholder="至少 6 位"></label>
+    <p class="err" id="authErr"></p>
+    <div class="row">
+      <button class="btn" id="authOk">登 录</button>
+      <button class="btn ghost" id="authSwitch">注 册</button>
+    </div>
+    <div class="row" id="afterLogin" hidden>
+      <span class="muted" id="who"></span>
+      <button class="btn ghost" id="logout" style="flex:0 0 auto">退 出</button>
+    </div>
+  </div>
+
+  <!-- 主体 -->
+  <div id="main" hidden>
+    <div class="tabs">
+      <button class="tab on" data-tab="mine">我 的 祝 福</button>
+      <button class="tab" data-tab="review" hidden>审 核</button>
+      <button class="tab" data-tab="users" hidden>管 理 员</button>
+      <button class="tab" data-tab="about">关 于</button>
+      <button class="tab" data-tab="notice">通 知</button>
+    </div>
+
+    <div class="card" id="tab-mine">
+      <h2>我 的 祝 福</h2>
+      <p class="muted">写过的都在这里。改过之后会重新等待审核，通过才会重新点亮。</p>
+      <div class="list" id="mineList"></div>
+    </div>
+
+    <div class="card" id="tab-review" hidden>
+      <h2>审 核</h2>
+      <div class="row">
+        <button class="chip" data-st="pending">待 审</button>
+        <button class="chip g" data-st="approved">已 审 核</button>
+        <button class="chip g" data-st="all">全 部</button>
+      </div>
+      <div class="row">
+        <label class="pick"><input type="checkbox" id="allPick"> 全 选</label>
+        <button class="chip" id="bApprove">批 量 通 过</button>
+        <button class="chip g" id="bReject">批 量 拒 绝</button>
+        <button class="chip g" id="bDelete">批 量 删 除</button>
+      </div>
+      <div class="list" id="reviewList"></div>
+    </div>
+
+    <div class="card" id="tab-users" hidden>
+      <h2>管 理 员</h2>
+      <p class="muted">填对方注册时的邮箱号，就能设为 / 取消管理员。</p>
+      <label class="f">账号<input id="userKey" type="text" placeholder="邮箱号"></label>
+      <div class="row">
+        <button class="btn" id="promote">设 为 管 理 员</button>
+        <button class="btn ghost" id="demote">取 消 管 理 员</button>
+      </div>
+      <div class="list" id="userList"></div>
+    </div>
+
+    <div class="card" id="tab-about" hidden>
+      <h2>关 于</h2>
+      <p class="muted">
+        这里的银河、星尘、流星和每一句文案，都是星宙自己原本的样子，没有换过皮。<br><br>
+        祝福由投稿者本人写下，照片与语音也归投稿者所有；如希望删除，可在「我的祝福」里自行移除，或联系站长。<br><br>
+        新写的祝福会先交给管理员看过，通过之后才会在星海里亮起来。管理员可以有好几位，由站长在「管理员」里设置。<br><br>
+        页面与交互为本站独立制作，未使用其他站点的代码、界面设计或美术素材。
+      </p>
+      <p class="muted" id="notifyState" style="margin-top:.9rem"></p>
+    </div>
+
+    <div class="card" id="tab-notice" hidden>
+      <h2>通 知</h2>
+      <p class="muted">星宙的消息会写在这里，所有人都能看到。</p>
+      <div class="list" id="noticeList"></div>
+      <div id="noticeAdmin" hidden style="margin-top:1rem">
+        <label class="f">发给全部用户<input id="noticeText" type="text" maxlength="200" placeholder="写一句话，会同时发到群和邮箱"></label>
+        <div class="row"><button class="btn" id="noticeSend">发 送 通 知</button></div>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="toast" id="toast" hidden></div>
+
+<script>
+(function(){
+  var $ = function(s,r){return (r||document).querySelector(s)};
+  var $$ = function(s,r){return Array.from((r||document).querySelectorAll(s))};
+  var esc = function(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})};
+  var plain = function(t){return String(t||'').replace(/\u2060/g,'')};
+  var st = { mode:'login', user:null, admin:false, tab:'mine', status:'pending' };
+
+  function toast(m){var t=$('#toast');t.textContent=m;t.hidden=false;
+    clearTimeout(toast._t);toast._t=setTimeout(function(){t.hidden=true},2300)}
+  function fmt(v){var d=new Date(v);return isNaN(d)?'':(d.getMonth()+1)+'/'+d.getDate()+' '+
+    String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')}
+  async function api(method,path,b){
+    var r=await fetch('/api'+path,{method:method,credentials:'same-origin',
+      headers:{'Content-Type':'application/json'},
+      body:b===undefined?undefined:JSON.stringify(b)});
+    var d={};try{d=await r.json()}catch(e){}
+    if(!r.ok)throw new Error(d.error||'请求失败');return d;
+  }
+
+  function renderAuth(){
+    var reg=st.mode==='register';
+    $('#authTitle').textContent=reg?'注 册':'登 录';
+    $('#authOk').textContent=reg?'注 册':'登 录';
+    $('#authSwitch').textContent=reg?'去 登 录':'注 册';
+    $('#nameRow').hidden=!reg;
+    $('#authErr').textContent='';
+  }
+  function renderWho(){
+    $('#authCard').querySelectorAll('label.f, .row, p.muted').forEach(function(el){
+      if(el.id!=='afterLogin') el.hidden=!!st.user;
+    });
+    $('#afterLogin').hidden=!st.user;
+    $('#main').hidden=!st.user && !st.admin;
+    if(st.user) $('#who').textContent='已登录 · '+st.user.name+(st.admin?' · 管理员':'');
+    $$('[data-tab="review"],[data-tab="users"]').forEach(function(b){b.hidden=!st.admin});
+    $('#noticeAdmin').hidden=!st.admin;
+    if(!st.admin && (st.tab==='review'||st.tab==='users')) switchTab('mine');
+  }
+  async function boot(){
+    try{var r=await api('GET','/me');st.user=r.user||null;st.admin=!!r.admin}catch(e){}
+    renderWho();
+    if(st.user||st.admin){ loadMine(); if(st.admin) loadUsers(); }
+  }
+  async function doAuth(){
+    var e=$('#authErr');e.textContent='';
+    var b={email:$('#email').value.trim(),password:$('#password').value};
+    if(st.mode==='register'){b.name=$('#regName').value.trim()}
+    try{
+      var r=await api('POST',st.mode==='register'?'/register':'/login',b);
+      st.user=r.user||null; st.admin=!!(r.user&&r.user.is_admin);
+      $('#password').value='';renderWho();loadMine();if(st.admin)loadUsers();
+      toast(st.mode==='register'?'注册成功':'欢迎回来');
+    }catch(err){e.textContent=err.message}
+  }
+  function switchTab(t){
+    st.tab=t;
+    $$('[data-tab]').forEach(function(b){b.classList.toggle('on',b.dataset.tab===t)});
+    ['mine','review','users','about','notice'].forEach(function(k){$('#tab-'+k).hidden=k!==t});
+    if(t==='mine')loadMine();
+    if(t==='review')loadReview();
+    if(t==='users')loadUsers();
+    if(t==='notice')loadNotice();
+  }
+
+  /* ── 我的祝福 ── */
+  async function loadMine(){
+    var box=$('#mineList');
+    try{
+      var r=await api('GET','/mine'),list=r.wishes||[];
+      if(!list.length){box.innerHTML='<p class="empty">还没有写过祝福</p>';return}
+      var tg={pending:'未 审 核',approved:'已 点 亮',rejected:'未 通 过'};
+      box.innerHTML=list.map(function(w){return ''+
+        '<div class="item" data-id="'+w.id+'">'+
+          '<div class="top"><span class="nm">✦ '+esc(w.name||'无名')+'</span>'+
+          '<span class="tag '+esc(w.status)+'">'+tg[w.status]+'</span></div>'+
+          '<p class="tm">'+fmt(w.created_at)+'</p>'+
+          (w.photo?'<img src="'+esc(w.photo)+'" alt="">':'')+
+          '<p class="tx">'+esc(plain(w.text))+'</p>'+
+          '<div class="acts"><button class="chip" data-edit="'+w.id+'">编 辑</button>'+
+          '<button class="chip g" data-del="'+w.id+'">删 除</button></div>'+
+        '</div>'}).join('');
+      $$('[data-edit]',box).forEach(function(b){b.onclick=function(){editWish(b.dataset.edit,list)}});
+      $$('[data-del]',box).forEach(function(b){b.onclick=async function(){
+        if(!confirm('确定删除这条祝福？'))return;
+        try{await api('POST','/mine',{id:b.dataset.del,action:'delete'});toast('已删除');loadMine()}
+        catch(e){toast(e.message)}
+      }});
+    }catch(e){box.innerHTML='<p class="empty">'+esc(e.message)+'</p>'}
+  }
+  async function editWish(id,list){
+    var w=list.find(function(x){return String(x.id)===String(id)});if(!w)return;
+    var text=prompt('改一下祝福语：',plain(w.text));if(text===null)return;
+    var name=prompt('署名：',w.name||'');if(name===null)return;
+    try{await api('POST','/mine',{id:id,text:text,name:name,photo:w.photo||''});
+      toast('已修改，重新等待审核');loadMine()}catch(e){toast(e.message)}
+  }
+
+  /* ── 审核 ── */
+  async function loadReview(){
+    var box=$('#reviewList');$('#allPick').checked=false;
+    try{
+      var r=await api('GET','/admin/wishes?status='+encodeURIComponent(st.status)),list=r.wishes||[];
+      if(!list.length){box.innerHTML='<p class="empty">这里空空的</p>';return}
+      var tg={pending:'未 审 核',approved:'已 点 亮',rejected:'未 通 过'};
+      box.innerHTML=list.map(function(w){return ''+
+        '<div class="item">'+
+          '<div class="top"><label class="pick"><input type="checkbox" data-pick="'+w.id+'"></label>'+
+          '<span class="tag '+esc(w.status)+'">'+tg[w.status]+'</span></div>'+
+          '<div class="top" style="margin-top:.4rem"><span class="nm">'+esc(w.name||'无名')+'</span>'+
+          '<span class="tm">'+fmt(w.created_at)+'</span></div>'+
+          (w.photo?'<img src="'+esc(w.photo)+'" alt="">':'')+
+          '<p class="tx">'+esc(plain(w.text))+'</p>'+
+          '<div class="acts">'+
+            '<button class="chip" data-one="approve" data-id="'+w.id+'">通 过</button>'+
+            '<button class="chip g" data-one="reject" data-id="'+w.id+'">拒 绝</button>'+
+            '<button class="chip g" data-one="delete" data-id="'+w.id+'">删 除</button>'+
+          '</div></div>'}).join('');
+      $$('[data-one]',box).forEach(function(b){b.onclick=async function(){
+        if(b.dataset.one==='delete'&&!confirm('确定删除？'))return;
+        try{await api('POST','/admin/wishes/'+b.dataset.id,{action:b.dataset.one});
+          toast('已处理');loadReview()}catch(e){toast(e.message)}
+      }});
+    }catch(e){box.innerHTML='<p class="empty">'+esc(e.message)+'</p>'}
+  }
+  function picked(){return $$('#reviewList [data-pick]:checked').map(function(c){return c.dataset.pick})}
+  async function batch(act){
+    var ids=picked();if(!ids.length){toast('先勾选几条');return}
+    if(act==='delete'&&!confirm('确定删除选中的 '+ids.length+' 条？'))return;
+    try{await api('POST','/admin/wishes/batch',{ids:ids,action:act});
+      toast('已处理');loadReview()}
+    catch(e){toast(e.message)}
+  }
+
+  /* ── 管理员 ── */
+  async function loadUsers(){
+    var box=$('#userList');
+    try{var r=await api('GET','/admin/users'),list=r.users||[];
+      if(!list.length){box.innerHTML='<p class="empty">还没有注册账号</p>';return}
+      box.innerHTML=list.map(function(u){return ''+
+        '<div class="item"><div class="top"><span class="nm">'+esc(u.name)+'</span>'+
+        '<span class="tag '+(u.is_admin?'approved':'')+'">'+(u.is_admin?'管 理 员':'搭配师')+'</span></div>'+
+        '<p class="tm">'+esc(u.email)+'</p></div>'}).join('');
+    }catch(e){box.innerHTML='<p class="empty">'+esc(e.message)+'</p>'}
+  }
+  async function setAdmin(act){
+    var key=$('#userKey').value.trim();if(!key){toast('先填邮箱号');return}
+    try{await api('POST','/admin/users',{key:key,action:act});
+      $('#userKey').value='';loadUsers();toast(act==='promote'?'已设为管理员':'已取消管理员')}
+    catch(e){toast(e.message)}
+  }
+
+  /* ── 通 知：所有人可见，管理员可群发 ── */
+  async function loadNotice(){
+    var box=$('#noticeList');
+    try{var r=await api('GET','/announcements'),list=r.announcements||[];
+      if(!list.length){box.innerHTML='<p class="empty">暂时没有通知</p>';return}
+      box.innerHTML=list.map(function(n){return ''+
+        '<div class="item"><div class="top"><span class="nm">✦ '+esc(n.author||'星宙')+'</span>'+
+        '<span class="tm">'+fmt(n.created_at)+'</span></div>'+
+        '<p class="tx">'+esc(n.text)+'</p></div>'}).join('');
+    }catch(e){box.innerHTML='<p class="empty">'+esc(e.message)+'</p>'}
+  }
+  async function sendNotice(){
+    var t=$('#noticeText').value.trim();if(!t){toast('先写点什么');return}
+    try{await api('POST','/admin/announce',{text:t});
+      $('#noticeText').value='';loadNotice();toast('已发给全部用户')}catch(e){toast(e.message)}
+  }
+
+  /* ── 绑定 ── */
+  $$('[data-tab]').forEach(function(b){b.onclick=function(){switchTab(b.dataset.tab)}});
+  $$('[data-st]').forEach(function(b){b.onclick=function(){
+    st.status=b.dataset.st;
+    $$('[data-st]').forEach(function(x){x.classList.toggle('g',x!==b)});
+    loadReview();
+  }});
+  $('#allPick').onchange=function(e){$$('#reviewList [data-pick]').forEach(function(c){c.checked=e.target.checked})};
+  $('#bApprove').onclick=function(){batch('approve')};
+  $('#bReject').onclick=function(){batch('reject')};
+  $('#bDelete').onclick=function(){batch('delete')};
+  $('#promote').onclick=function(){setAdmin('promote')};
+  $('#demote').onclick=function(){setAdmin('demote')};
+  $('#noticeSend').onclick=sendNotice;
+  $('#authSwitch').onclick=function(){st.mode=st.mode==='login'?'register':'login';renderAuth()};
+  $('#authOk').onclick=doAuth;
+  $('#password').onkeydown=function(e){if(e.key==='Enter')doAuth()};
+  $('#logout').onclick=async function(){
+    await api('POST','/logout',{});st.user=null;st.admin=false;
+    try{await api('POST','/admin/logout',{})}catch(e){}
+    renderWho();toast('已退出');
+  };
+  boot();
+})();
+</script>
+</body>
+</html>

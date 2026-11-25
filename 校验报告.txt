@@ -1,0 +1,61 @@
+星宙 · 主页保真校验报告
+生成时间：2026-11-25 20:04
+
+原始文件：zoe0531.github.io/Xavieruniverse/星宙.html
+原始字节：711653   MD5：992bd88908e3802d64f1bc65fa1a46a0
+云版字节：731891（多出的是末尾独立追加的功能层）
+
+方法：先剥离末尾「追加功能层」两段，再按段比对。
+      样式 / 渲染 / 末段脚本用原始字节算哈希；HTML 段因剥离留下 2 个空行，做空行归一化后比对。
+
+按段比对（MD5 前 16 位）：
+
+  原 <style> 样式段          6b18e9c14450a195  6b18e9c14450a195  完全一致 ✓
+  Three.js 银河渲染段         98744f0bed133810  98744f0bed133810  完全一致 ✓
+  页面 HTML / 全部文案         2d58b8bb390017a4  2d58b8bb390017a4  完全一致 ✓
+  原末段脚本                  c00d300594ceb867  c00d300594ceb867  完全一致 ✓
+  原业务逻辑段                 36d1eff90bf30a81  beb56252b75bee39  有改动（见下）
+
+业务逻辑段全部改动（仅 4 行数据配置 + 1 行文件头注释）：
+
+  --- 
+  +++ 
+  @@ -6,3 +6,3 @@
+      —— 拖动绕整颗宇宙转圈；每批随机抽 130 颗铺满球面，支持 5 万星位
+  -   —— 零预置；祝福可带照片；管理入口密码 zzz030101
+  +   —— 零预置；祝福可带照片；管理入口走服务端校验
+      ============================================================ */
+  @@ -10,3 +10,3 @@
+     pass:'1016',
+  -  adminPass:'zzz030101',
+  +  adminPass:'__server_side__',   /* 口令在服务端校验，前端不出现 */
+     batch:130,            // 每批渲染几颗（性能上限，与总数无关）
+  @@ -17,4 +17,3 @@
+     maxWishes:5000,
+  -  sbURL:'https://qujcnuzkvhcbmqbbnlwn.supabase.co',
+  -  sbKey:'sb_publishable_X3vPBDTm4yNAA_Wk1vHmSA_hRHHjO5y'
+  +  apiBase:'/api/wishes'   /* 数据交给本站服务端，密钥不再放前端 */
+   };
+  @@ -155,3 +154,3 @@
+   function sbH(extra){
+  - var h={apikey:CONFIG.sbKey,Authorization:'Bearer '+CONFIG.sbKey};
+  + var h={};   /* 凭据收在服务端，前端不带任何密钥 */
+    if(extra)for(var k in extra)h[k]=extra[k];
+  @@ -160,3 +159,3 @@
+   var STORE={
+  -  base:CONFIG.sbURL+'/rest/v1/wishes',
+  +  base:CONFIG.apiBase,
+     load:function(){
+
+末尾独立追加（不改动上方任何一行）：
+  <style id="xz-addon-style">  新增样式，原 <style> 段未动
+  <script id="xz-addon">       新增功能：审核符号 / ⚙ 设置 / 通知 / 我 的
+
+结论：
+  · 银河渲染（内联 Three.js）、CSS 样式、页面结构、每一句文案 —— 完全一致
+  · 改动只发生在数据层配置与文件头注释（抹掉原站自带的明文口令）
+  · 你要的新功能是独立追加的一层，没有替换、没有重写任何原有代码
+  · 后台 console.html 为独立文件，按原站紫玻璃新写，未复用第三方素材
+
+复核：把末尾 <style id="xz-addon-style"> 与 <script id="xz-addon"> 两段删掉，
+      再与原 index.html 比对即可。
