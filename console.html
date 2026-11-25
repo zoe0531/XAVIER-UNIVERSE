@@ -77,6 +77,27 @@ label.f{display:block;font-size:.7rem;letter-spacing:.18em;color:rgba(255,255,25
   background:rgba(24,14,64,.96);border:1px solid rgba(185,167,255,.4);border-radius:999px;
   padding:.6rem 1.2rem;font-size:.74rem;letter-spacing:.14em;color:#fff3dd;white-space:nowrap;z-index:20}
 [hidden]{display:none!important}
+/* ── 边框小兔 / 星球 / 星尘 ── */
+.card{position:relative}
+.card::before{content:"🐰";position:absolute;right:16px;top:-15px;font-size:17px;
+  filter:drop-shadow(0 0 6px rgba(190,165,255,.7));pointer-events:none;
+  animation:xzHop 2.6s ease-in-out infinite;z-index:2}
+.card::after{content:"";position:absolute;right:10px;top:-9px;width:26px;height:9px;border-radius:50%;
+  border:1px solid rgba(255,217,160,.6);transform:rotate(-24deg);pointer-events:none;z-index:1}
+@keyframes xzHop{0%,72%,100%{transform:translateY(0) rotate(-4deg)}80%{transform:translateY(-4px) rotate(3deg)}88%{transform:translateY(0) rotate(-2deg)}}
+body{background-image:
+    radial-gradient(1px 1px at 12% 22%,rgba(255,246,224,.55),transparent),
+    radial-gradient(1px 1px at 78% 14%,rgba(226,206,255,.5),transparent),
+    radial-gradient(1px 1px at 34% 68%,rgba(255,240,210,.4),transparent),
+    radial-gradient(1px 1px at 88% 82%,rgba(214,190,255,.45),transparent),
+    radial-gradient(1px 1px at 58% 36%,rgba(255,250,235,.3),transparent),
+    radial-gradient(58% 38% at 22% 18%,rgba(138,96,222,.40),transparent 72%),
+    radial-gradient(52% 44% at 82% 74%,rgba(86,64,196,.34),transparent 74%),
+    radial-gradient(70% 52% at 58% 46%,rgba(112,72,208,.20),transparent 80%),
+    linear-gradient(180deg,#180b3c,#2b1670 52%,#3a2088)}
+.wrap{position:relative}
+/* 通知里的图片 */
+.item img.notice-img{max-height:220px}
 </style>
 </head>
 <body>
@@ -88,9 +109,9 @@ label.f{display:block;font-size:.7rem;letter-spacing:.18em;color:rgba(255,255,25
   <!-- 登录 -->
   <div class="card" id="authCard">
     <h2 id="authTitle">登 录</h2>
-    <label class="f">邮箱<input id="email" type="email" autocomplete="email" placeholder="邮 箱"></label>
-    <label class="f" id="nameRow" hidden>名字<input id="regName" type="text" maxlength="20" placeholder="填入名称"></label>
-    <label class="f">密码<input id="password" type="password" autocomplete="current-password" placeholder="至少 6 位"></label>
+    <label class="f">账户码<input id="email" type="email" autocomplete="email" placeholder="账 户 码"></label>
+    <label class="f" id="nameRow" hidden>名字<input id="regName" type="text" maxlength="20" placeholder="名 称"></label>
+    <label class="f">密码<input id="password" type="password" autocomplete="current-password" placeholder="密 码"></label>
     <p class="err" id="authErr"></p>
     <div class="row">
       <button class="btn" id="authOk">登 录</button>
@@ -114,7 +135,6 @@ label.f{display:block;font-size:.7rem;letter-spacing:.18em;color:rgba(255,255,25
 
     <div class="card" id="tab-mine">
       <h2>我 的 祝 福</h2>
-      <p class="muted">写过的都在这里。改过之后会重新等待审核，通过才会重新点亮。</p>
       <div class="list" id="mineList"></div>
     </div>
 
@@ -136,32 +156,30 @@ label.f{display:block;font-size:.7rem;letter-spacing:.18em;color:rgba(255,255,25
 
     <div class="card" id="tab-users" hidden>
       <h2>管 理 员</h2>
-      <p class="muted">填对方注册时的邮箱号，就能设为 / 取消管理员。</p>
-      <label class="f">账号<input id="userKey" type="text" placeholder="邮箱号"></label>
-      <div class="row">
-        <button class="btn" id="promote">设 为 管 理 员</button>
-        <button class="btn ghost" id="demote">取 消 管 理 员</button>
-      </div>
       <div class="list" id="userList"></div>
     </div>
 
     <div class="card" id="tab-about" hidden>
       <h2>关 于</h2>
       <p class="muted">
-        这里的银河、星尘、流星和每一句文案，都是星宙自己原本的样子，没有换过皮。<br><br>
-        祝福由投稿者本人写下，照片与语音也归投稿者所有；如希望删除，可在「我的祝福」里自行移除，或联系站长。<br><br>
-        新写的祝福会先交给管理员看过，通过之后才会在星海里亮起来。管理员可以有好几位，由站长在「管理员」里设置。<br><br>
-        页面与交互为本站独立制作，未使用其他站点的代码、界面设计或美术素材。
+        提醒：本站为公开线上空间，请守护好自身隐私，不要随意发布私人照片、敏感信息，理性发言。<br><br>
+        网站为爱发电，尚有不足之处，请狐狐妃妃球球花花文明发言。<br><br>
+        祝福由投稿者本人写下，照片与语音也归投稿者所有；如希望删除，可在「我的祝福」里自行移除，或联系管理员。<br><br>
+        新写的祝福会先交给管理员审核，通过之后正式存于星宙中，可自行查看。<br><br>
+        页面与交互为本站独立制作，未经许可，请勿复用本站代码、界面设计或美术素材，谢谢。
       </p>
-      <p class="muted" id="notifyState" style="margin-top:.9rem"></p>
     </div>
 
     <div class="card" id="tab-notice" hidden>
       <h2>通 知</h2>
-      <p class="muted">星宙的消息会写在这里，所有人都能看到。</p>
       <div class="list" id="noticeList"></div>
       <div id="noticeAdmin" hidden style="margin-top:1rem">
-        <label class="f">发给全部用户<input id="noticeText" type="text" maxlength="200" placeholder="写一句话，会同时发到群和邮箱"></label>
+        <label class="f">发给全部用户<input id="noticeText" type="text" maxlength="200" placeholder="填入通知"></label>
+        <div class="row">
+          <button class="btn ghost" id="noticePhoto" style="flex:0 0 auto">选 图</button>
+          <span class="muted" id="noticePhotoName" style="flex:1"></span>
+        </div>
+        <input type="file" id="noticeFile" accept="image/*" hidden>
         <div class="row"><button class="btn" id="noticeSend">发 送 通 知</button></div>
       </div>
     </div>
@@ -176,7 +194,7 @@ label.f{display:block;font-size:.7rem;letter-spacing:.18em;color:rgba(255,255,25
   var esc = function(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){
     return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})};
   var plain = function(t){return String(t||'').replace(/\u2060/g,'')};
-  var st = { mode:'login', user:null, admin:false, tab:'mine', status:'pending' };
+  var st = { mode:'login', user:null, admin:false, owner:false, tab:'mine', status:'pending' };
 
   function toast(m){var t=$('#toast');t.textContent=m;t.hidden=false;
     clearTimeout(toast._t);toast._t=setTimeout(function(){t.hidden=true},2300)}
@@ -204,13 +222,13 @@ label.f{display:block;font-size:.7rem;letter-spacing:.18em;color:rgba(255,255,25
     });
     $('#afterLogin').hidden=!st.user;
     $('#main').hidden=!st.user && !st.admin;
-    if(st.user) $('#who').textContent='已登录 · '+st.user.name+(st.admin?' · 管理员':'');
+    if(st.user) $('#who').textContent='已登录 · '+st.user.name+(st.owner?' · 管理员':'');
     $$('[data-tab="review"],[data-tab="users"]').forEach(function(b){b.hidden=!st.admin});
     $('#noticeAdmin').hidden=!st.admin;
     if(!st.admin && (st.tab==='review'||st.tab==='users')) switchTab('mine');
   }
   async function boot(){
-    try{var r=await api('GET','/me');st.user=r.user||null;st.admin=!!r.admin}catch(e){}
+    try{var r=await api('GET','/me');st.user=r.user||null;st.admin=!!r.owner;st.owner=!!r.owner}catch(e){}
     renderWho();
     if(st.user||st.admin){ loadMine(); if(st.admin) loadUsers(); }
   }
@@ -220,7 +238,7 @@ label.f{display:block;font-size:.7rem;letter-spacing:.18em;color:rgba(255,255,25
     if(st.mode==='register'){b.name=$('#regName').value.trim()}
     try{
       var r=await api('POST',st.mode==='register'?'/register':'/login',b);
-      st.user=r.user||null; st.admin=!!(r.user&&r.user.is_admin);
+      st.user=r.user||null; st.admin=!!(r.user&&r.user.is_admin); st.owner=st.admin;
       $('#password').value='';renderWho();loadMine();if(st.admin)loadUsers();
       toast(st.mode==='register'?'注册成功':'欢迎回来');
     }catch(err){e.textContent=err.message}
@@ -311,17 +329,11 @@ label.f{display:block;font-size:.7rem;letter-spacing:.18em;color:rgba(255,255,25
       if(!list.length){box.innerHTML='<p class="empty">还没有注册账号</p>';return}
       box.innerHTML=list.map(function(u){return ''+
         '<div class="item"><div class="top"><span class="nm">'+esc(u.name)+'</span>'+
-        '<span class="tag '+(u.is_admin?'approved':'')+'">'+(u.is_admin?'管 理 员':'搭配师')+'</span></div>'+
+        '<span class="tag '+(u.is_admin?'approved':'')+'">'+(u.is_admin?'管 理 员':'成 员')+
+        (u.muted?' · 已 禁 言':'')+'</span></div>'+
         '<p class="tm">'+esc(u.email)+'</p></div>'}).join('');
     }catch(e){box.innerHTML='<p class="empty">'+esc(e.message)+'</p>'}
   }
-  async function setAdmin(act){
-    var key=$('#userKey').value.trim();if(!key){toast('先填邮箱号');return}
-    try{await api('POST','/admin/users',{key:key,action:act});
-      $('#userKey').value='';loadUsers();toast(act==='promote'?'已设为管理员':'已取消管理员')}
-    catch(e){toast(e.message)}
-  }
-
   /* ── 通 知：所有人可见，管理员可群发 ── */
   async function loadNotice(){
     var box=$('#noticeList');
@@ -330,13 +342,36 @@ label.f{display:block;font-size:.7rem;letter-spacing:.18em;color:rgba(255,255,25
       box.innerHTML=list.map(function(n){return ''+
         '<div class="item"><div class="top"><span class="nm">✦ '+esc(n.author||'星宙')+'</span>'+
         '<span class="tm">'+fmt(n.created_at)+'</span></div>'+
+        (n.photo?'<img class="notice-img" src="'+esc(n.photo)+'" alt="">':'')+
         '<p class="tx">'+esc(n.text)+'</p></div>'}).join('');
     }catch(e){box.innerHTML='<p class="empty">'+esc(e.message)+'</p>'}
   }
+  var noticePhoto='';
+  function compact(file,cb){
+    var fr=new FileReader();
+    fr.onload=function(){
+      var im=new Image();
+      im.onload=function(){
+        var w=im.width,h=im.height,mx=1000,k=Math.min(1,mx/Math.max(w,h));
+        var c=document.createElement('canvas');c.width=Math.round(w*k);c.height=Math.round(h*k);
+        c.getContext('2d').drawImage(im,0,0,c.width,c.height);
+        cb(c.toDataURL('image/jpeg',.72));
+      };
+      im.src=fr.result;
+    };
+    fr.readAsDataURL(file);
+  }
+  $('#noticePhoto').onclick=function(){$('#noticeFile').click()};
+  $('#noticeFile').onchange=function(e){
+    var f=e.target.files&&e.target.files[0];if(!f)return;
+    compact(f,function(d){noticePhoto=d;$('#noticePhotoName').textContent='已选图'});
+    e.target.value='';
+  };
   async function sendNotice(){
-    var t=$('#noticeText').value.trim();if(!t){toast('先写点什么');return}
-    try{await api('POST','/admin/announce',{text:t});
-      $('#noticeText').value='';loadNotice();toast('已发给全部用户')}catch(e){toast(e.message)}
+    var t=$('#noticeText').value.trim();if(!t&&!noticePhoto){toast('填入通知');return}
+    try{await api('POST','/admin/announce',{text:t,photo:noticePhoto});
+      $('#noticeText').value='';noticePhoto='';$('#noticePhotoName').textContent='';
+      loadNotice();toast('已发给全部用户')}catch(e){toast(e.message)}
   }
 
   /* ── 绑定 ── */
@@ -350,8 +385,6 @@ label.f{display:block;font-size:.7rem;letter-spacing:.18em;color:rgba(255,255,25
   $('#bApprove').onclick=function(){batch('approve')};
   $('#bReject').onclick=function(){batch('reject')};
   $('#bDelete').onclick=function(){batch('delete')};
-  $('#promote').onclick=function(){setAdmin('promote')};
-  $('#demote').onclick=function(){setAdmin('demote')};
   $('#noticeSend').onclick=sendNotice;
   $('#authSwitch').onclick=function(){st.mode=st.mode==='login'?'register':'login';renderAuth()};
   $('#authOk').onclick=doAuth;

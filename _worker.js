@@ -10,9 +10,9 @@
  * 所以主页 index.html 只改了 4 行配置，银河渲染一个字节没动。
  *
  * 绑定：DB (D1，必填)、BUCKET (R2，选填)
- * 变量：ADMIN_PASSWORD（可选，默认站长口令只在服务端常量里）/ NOTIFY_WEBHOOK /
+ * 变量：ADMIN_PASSWORD / ADVANCED_PASSWORD（可选）/ NOTIFY_WEBHOOK /
  *       RESEND_API_KEY / NOTIFY_EMAIL_FROM / NOTIFY_EMAIL_TO
- * 管理员来源唯一：站长口令进 ⚙ 设置 → 按邮箱把账号设为管理员。
+ * 管理员任命只在「高级设置」里进行。
  * 注册接口不接受任何提权参数，前端不出现口令明文。
  */
 const JSON_H = { 'Content-Type': 'application/json; charset=utf-8', 'X-Content-Type-Options': 'nosniff' };
@@ -70,7 +70,7 @@ async function me(env, req) {
 const OWNER_PASS = (env) => String(env.ADMIN_PASSWORD || 'zzz030101');
 async function isAdmin(env, req) {
   const u = await me(env, req);
-  if (u && u.is_admin) return true;          // 按邮箱设置的持久管理员
+  if (u && u.is_admin) return true;          // 被设为管理员的持久身份
   const s = await session(env, req);
   return !!(s && s.role === 'admin');        // 站长口令临时会话，仅用于进设置面板
 }
@@ -80,6 +80,34 @@ async function isOwnerAdmin(env, req) {
   return !!(u && u.is_admin);
 }
 function withCookie(res, c) { if (c) res.headers.append('Set-Cookie', c); return res; }
+
+/* ── 高级设置（口令只放服务端，可用 ADVANCED_PASSWORD 覆盖） ── */
+const ADV_PASS = (env) => String(env.ADVANCED_PASSWORD || '1016sxh');
+async function isAdvanced(env, req) {
+  const s = await session(env, req);
+  return !!(s && s.role === 'advanced');
+}
+async function getFlag(env, key) {
+  try {
+    const r = await env.DB.prepare('SELECT value FROM settings WHERE key=?').bind(key).first();
+    return r ? String(r.value) : '0';
+  } catch (e) { return '0'; }
+}
+async function setFlag(env, key, val) {
+  try {
+    await env.DB.prepare('INSERT INTO settings (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value')
+      .bind(key, String(val)).run();
+  } catch (e) {}
+}
+/* 旧库自动补字段 / 补表，重复执行安全，用户无需手动跑 SQL */
+let _schemaReady = false;
+async function ensureSchema(env) {
+  if (_schemaReady) return;
+  try { await env.DB.prepare('CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)').run(); } catch (e) {}
+  try { await env.DB.prepare('ALTER TABLE users ADD COLUMN muted INTEGER NOT NULL DEFAULT 0').run(); } catch (e) {}
+  try { await env.DB.prepare('ALTER TABLE announcements ADD COLUMN photo TEXT').run(); } catch (e) {}
+  _schemaReady = true;
+}
 
 /* ── 通知（全部选填，失败不影响主流程） ── */
 function notifyText(title, lines) {
@@ -132,6 +160,7 @@ export async function handleApi(request, env) {
 
   if (!env.DB) return json({ error: 'DB_NOT_BOUND' }, 503);
   if (m === 'OPTIONS') return new Response(null, { status: 204 });
+  await ensureSchema(env);
 
   try {
     /* ===== 原站 STORE 专用：/api/wishes ===== */
@@ -152,6 +181,14 @@ export async function handleApi(request, env) {
     if (path === '/wishes' && m === 'POST') {
       const { s, cookie } = await ensureSession(env, request);
       const b = await body(request);
+      if ((await getFlag(env, 'global_mute')) === '1') return fail('暂时无法投星');
+      const cur = await me(env, request);
+      if (cur) {
+        try {
+          const mu = await env.DB.prepare('SELECT muted FROM users WHERE id=?').bind(cur.id).first();
+          if (mu && Number(mu.muted) === 1) return fail('该账号已被禁言');
+        } catch (e) {}
+      }
       const text = String(b.text || '');
       if (!plain(text).trim()) return fail('先写点什么吧');
       const name = String(b.name || '').slice(0, 40) || '无名';
@@ -190,11 +227,11 @@ export async function handleApi(request, env) {
 
     /* ===== 通 知：所有人可读，管理员可群发 ===== */
     if (path === '/announcements' && m === 'GET') {
-      const r = await env.DB.prepare(
-        'SELECT id,text,author,created_at FROM announcements ORDER BY id DESC LIMIT 30'
-      ).bind().all();
-      return json({ announcements: (r.results || []).map((n) => ({
-        id: n.id, text: n.text, author: n.author,
+      let rows;
+      try { rows = (await env.DB.prepare('SELECT id,text,photo,author,created_at FROM announcements ORDER BY id DESC LIMIT 30').bind().all()).results || []; }
+      catch (e) { rows = (await env.DB.prepare('SELECT id,text,author,created_at FROM announcements ORDER BY id DESC LIMIT 30').bind().all()).results || []; rows.forEach((x) => { x.photo = ''; }); }
+      return json({ announcements: rows.map((n) => ({
+        id: n.id, text: n.text, photo: n.photo || '', author: n.author,
         created_at: new Date(Number(n.created_at) || Date.now()).toISOString()
       })) }, 200, { 'Cache-Control': 'no-store' });
     }
@@ -202,13 +239,14 @@ export async function handleApi(request, env) {
       if (!(await isAdmin(env, request))) return fail('未授权', 401);
       const b = await body(request);
       const text = String(b.text || '').trim().slice(0, 500);
-      if (!text) return fail('先写点什么吧');
+      const photo = String(b.photo || '').slice(0, 900000);
+      if (!text && !photo) return fail('填入通知');
       const u = await me(env, request);
-      await env.DB.prepare('INSERT INTO announcements (text,author,created_at) VALUES (?,?,?)')
-        .bind(text, u ? u.name : '星宙', Date.now()).run();
-      // 群机器人 + 固定通知邮箱
+      await env.DB.prepare('INSERT INTO announcements (text,photo,author,created_at) VALUES (?,?,?,?)')
+        .bind(text, photo, u ? u.name : '星宙', Date.now()).run();
+      // 群机器人 + 固定通知地址
       await safeNotify(env, '星宙通知', [text, `时间：${when()}`]);
-      // 全部注册用户：站内公告人人可见，注册邮箱也各发一封（不与固定收件人重复）
+      // 全部注册用户：站内公告人人可见，账户码也各发一封（不与固定收件人重复）
       const key = String(env.RESEND_API_KEY || '').trim();
       const ur = await env.DB.prepare('SELECT email FROM users ORDER BY id').bind().all();
       const all = (ur.results || []).map((x) => x.email).filter(Boolean);
@@ -220,7 +258,7 @@ export async function handleApi(request, env) {
         for (let i = 0; i < extra.length; i += 50) {
           jobs.push(postJson('https://api.resend.com/emails', {
             from, to: extra.slice(i, i + 50), subject: '【星宙】全体通知',
-            html: `<div style="font-family:sans-serif;line-height:1.8"><h2>✦ 星宙 · 全体通知</h2><p>${text.replace(/</g, '&lt;')}</p><hr><small>— 星宙 XAVIER'S UNIVERSE</small></div>`
+            html: `<div style="font-family:sans-serif;line-height:1.8"><h2>✦ 星宙 · 全体通知</h2><p>${text.replace(/</g, '&lt;')}</p>${photo ? '<p>（含一张图片，请到站内通知查看）</p>' : ''}<hr><small>— 星宙 XAVIER'S UNIVERSE</small></div>`
           }, { Authorization: `Bearer ${key}`, 'User-Agent': 'xavier-universe/1.0' }));
         }
         await Promise.allSettled(jobs);
@@ -230,7 +268,12 @@ export async function handleApi(request, env) {
 
     /* ===== 控制台：账号 ===== */
     if (path === '/me' && m === 'GET') {
-      return json({ user: await me(env, request), admin: await isAdmin(env, request), owner: await isOwnerAdmin(env, request) });
+      const u = await me(env, request);
+      let muted = 0;
+      if (u) { try { const r = await env.DB.prepare('SELECT muted FROM users WHERE id=?').bind(u.id).first(); muted = r && Number(r.muted) === 1 ? 1 : 0; } catch (e) {} }
+      return json({ user: u, admin: await isAdmin(env, request), owner: await isOwnerAdmin(env, request),
+        advanced: await isAdvanced(env, request), muted: muted,
+        global_mute: (await getFlag(env, 'global_mute')) === '1' ? 1 : 0 });
     }
 
     /* 站长口令：不出现在任何前端文件里，只在这里校验 */
@@ -248,11 +291,11 @@ export async function handleApi(request, env) {
       const email = String(b.email || '').trim().toLowerCase();
       const name = String(b.name || '').trim().slice(0, 20);
       const pw = String(b.password || '');
-      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return fail('邮箱格式不对');
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return fail('账户码格式不对');
       if (!name) return fail('填个名字吧');
       if (pw.length < 6) return fail('密码至少 6 位');
-      if (await env.DB.prepare('SELECT id FROM users WHERE email=?').bind(email).first()) return fail('这个邮箱注册过了');
-      // 管理员只能由站长在设置里「按邮箱」指定，注册接口不接受任何提权参数
+      if (await env.DB.prepare('SELECT id FROM users WHERE email=?').bind(email).first()) return fail('这个账户码注册过了');
+      // 管理员只能在高级设置里指定，注册接口不接受任何提权参数
       const isAdm = 0;
       const salt = rnd(16), ph = await pbkdf2(pw, salt);
       await env.DB.prepare('INSERT INTO users (email,name,password_hash,salt,is_admin,created_at) VALUES (?,?,?,?,?,?)')
@@ -267,7 +310,7 @@ export async function handleApi(request, env) {
       const b = await body(request);
       const email = String(b.email || '').trim().toLowerCase();
       const u = await env.DB.prepare('SELECT id,email,name,password_hash,salt,is_admin FROM users WHERE email=?').bind(email).first();
-      if (!u || !tseq(await pbkdf2(String(b.password || ''), u.salt), u.password_hash)) return fail('邮箱或密码不对', 401);
+      if (!u || !tseq(await pbkdf2(String(b.password || ''), u.salt), u.password_hash)) return fail('账户码或密码不对', 401);
       await env.DB.prepare('UPDATE sessions SET user_id=?,role=? WHERE token=?').bind(u.id, 'user', s.token).run();
       return withCookie(json({ user: { id: u.id, email: u.email, name: u.name, is_admin: Number(u.is_admin) === 1 } }), cookie);
     }
@@ -369,21 +412,72 @@ export async function handleApi(request, env) {
     /* ===== 多管理员 ===== */
     if (path === '/admin/users' && m === 'GET') {
       if (!(await isAdmin(env, request))) return fail('未授权', 401);
-      const r = await env.DB.prepare('SELECT id,email,name,is_admin,created_at FROM users ORDER BY id DESC LIMIT 500').bind().all();
-      return json({ users: r.results || [] });
+      let ul2 = [];
+      try { ul2 = (await env.DB.prepare('SELECT id,email,name,is_admin,muted,created_at FROM users ORDER BY id DESC LIMIT 500').bind().all()).results || []; }
+      catch (e) { ul2 = (await env.DB.prepare('SELECT id,email,name,is_admin,created_at FROM users ORDER BY id DESC LIMIT 500').bind().all()).results || []; ul2.forEach((x) => { x.muted = 0; }); }
+      return json({ users: ul2 });
     }
     if (path === '/admin/users' && m === 'POST') {
-      if (!(await isAdmin(env, request))) return fail('未授权', 401);
+      if (!(await isAdvanced(env, request))) return fail('未授权', 401);
       const b = await body(request), act = String(b.action || '');
       if (!['promote', 'demote'].includes(act)) return fail('操作不合法');
       const email = String(b.key || b.email || '').trim().toLowerCase();
-      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return fail('请填完整的邮箱号');
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return fail('请填完整的账户码');
       const u = await env.DB.prepare('SELECT id,name,is_admin FROM users WHERE email=?').bind(email).first();
-      if (!u) return fail('找不到这个邮箱注册的账号');
+      if (!u) return fail('找不到这个账户码');
       await env.DB.prepare('UPDATE users SET is_admin=? WHERE id=?').bind(act === 'promote' ? 1 : 0, u.id).run();
       // 审核符号只看 users.is_admin（/me 的 owner 字段），这里一改，对方刷新后符号立刻收起。
       // 不降级任何会话，避免站长取消别人时把自己也踢出设置。
       return json({ ok: true, name: u.name });
+    }
+
+    /* ===== 高级设置：1016sxh ===== */
+    if (path === '/advanced/login' && m === 'POST') {
+      const b = await body(request);
+      if (!tseq(String(b.password || ''), ADV_PASS(env))) return fail('不对', 401);
+      const { s, cookie } = await ensureSession(env, request);
+      await env.DB.prepare('UPDATE sessions SET role=? WHERE token=?').bind('advanced', s.token).run();
+      return withCookie(json({ ok: true }), cookie);
+    }
+    if (path === '/advanced/logout' && m === 'POST') {
+      const s = await session(env, request);
+      if (s) await env.DB.prepare('UPDATE sessions SET role=? WHERE token=?')
+        .bind(s.user_id ? 'user' : 'visitor', s.token).run();
+      return json({ ok: true });
+    }
+    if (path === '/advanced/users' && m === 'GET') {
+      if (!(await isAdvanced(env, request))) return fail('未授权', 401);
+      let ul = [];
+      try { ul = (await env.DB.prepare('SELECT id,email,name,is_admin,muted,created_at FROM users ORDER BY id DESC LIMIT 500').bind().all()).results || []; }
+      catch (e) { ul = (await env.DB.prepare('SELECT id,email,name,is_admin,created_at FROM users ORDER BY id DESC LIMIT 500').bind().all()).results || []; ul.forEach((x) => { x.muted = 0; }); }
+      return json({ users: ul, global_mute: (await getFlag(env, 'global_mute')) === '1' ? 1 : 0 });
+    }
+    if (path === '/advanced/mute' && m === 'POST') {
+      if (!(await isAdvanced(env, request))) return fail('未授权', 401);
+      const b = await body(request), on = String(b.action || '') === 'mute' ? 1 : 0;
+      const key = String(b.key || '').trim().toLowerCase();
+      const u = await env.DB.prepare('SELECT id FROM users WHERE email=?').bind(key).first();
+      if (!u) return fail('找不到这个账户码');
+      await env.DB.prepare('UPDATE users SET muted=? WHERE id=?').bind(on, u.id).run();
+      return json({ ok: true, muted: on });
+    }
+    if (path === '/advanced/global-mute' && m === 'POST') {
+      if (!(await isAdvanced(env, request))) return fail('未授权', 401);
+      const b = await body(request);
+      await setFlag(env, 'global_mute', b.on ? '1' : '0');
+      return json({ ok: true, on: !!b.on });
+    }
+    /* 密码是加盐哈希、不可逆，无法查看明文；这里改成「重置」，新密码只返回这一次 */
+    if (path === '/advanced/reset-password' && m === 'POST') {
+      if (!(await isAdvanced(env, request))) return fail('未授权', 401);
+      const b = await body(request);
+      const key = String(b.key || '').trim().toLowerCase();
+      const u = await env.DB.prepare('SELECT id FROM users WHERE email=?').bind(key).first();
+      if (!u) return fail('找不到这个账户码');
+      const np = rnd(6).slice(0, 10);
+      const salt = rnd(16), ph = await pbkdf2(np, salt);
+      await env.DB.prepare('UPDATE users SET password_hash=?,salt=? WHERE id=?').bind(ph, salt, u.id).run();
+      return json({ ok: true, password: np });
     }
 
     return fail('接口不存在', 404);
