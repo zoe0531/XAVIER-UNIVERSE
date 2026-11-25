@@ -106,6 +106,7 @@ async function ensureSchema(env) {
   try { await env.DB.prepare('CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)').run(); } catch (e) {}
   try { await env.DB.prepare('ALTER TABLE users ADD COLUMN muted INTEGER NOT NULL DEFAULT 0').run(); } catch (e) {}
   try { await env.DB.prepare('ALTER TABLE announcements ADD COLUMN photo TEXT').run(); } catch (e) {}
+  try { await env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_wishes_dedup ON wishes(owner_token, created_at DESC)').run(); } catch (e) {}
   _schemaReady = true;
 }
 
@@ -143,6 +144,8 @@ async function notify(env, title, lines) {
 }
 async function safeNotify(env, title, lines) { try { await notify(env, title, lines); } catch (e) { /* 吞掉 */ } }
 const plain = (t) => String(t || '').replace(/\u2060/g, '').slice(0, 240);
+/* 去重用完整正文，不截断，避免两条长祝福前 240 字相同被误吞 */
+const dedupText = (t) => String(t || '').replace(/\u2060/g, '');
 const when = () => new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
 
 /* ── 行 → 原站格式 ── */
@@ -194,6 +197,14 @@ export async function handleApi(request, env) {
       const name = String(b.name || '').slice(0, 40) || '无名';
       const photo = String(b.photo || '').slice(0, 6000000);
       const now = Date.now();
+      /* 防重复：同一设备 30 秒内、内容/署名/图完全一样的，只认第一条。
+         连点、断网补传、多人重试都不会在星宙或审核里生出第二颗。 */
+      const recent = await env.DB.prepare(
+        'SELECT id,text,name,photo,created_at FROM wishes WHERE owner_token=? AND created_at>? ORDER BY id DESC LIMIT 20'
+      ).bind(s.token, now - 30000).all();
+      const same = (recent.results || []).find((x) =>
+        dedupText(x.text) === dedupText(text) && String(x.name || '') === name && String(x.photo || '') === photo);
+      if (same) return withCookie(json([row(same)], 200, { 'Cache-Control': 'no-store' }), cookie);
       const ins = await env.DB.prepare(
         'INSERT INTO wishes (owner_token,user_id,text,name,photo,status,created_at) VALUES (?,?,?,?,?,?,?)'
       ).bind(s.token, s.user_id, text, name, photo, 'pending', now).run();
@@ -264,6 +275,17 @@ export async function handleApi(request, env) {
         await Promise.allSettled(jobs);
       }
       return json({ ok: true, users: all.length });
+    }
+
+    /* ===== 通知撤除：管理员都能撤 ===== */
+    if (parts[0] === 'admin' && parts[1] === 'announce' && parts[2] && m === 'POST') {
+      if (!(await isAdmin(env, request))) return fail('未授权', 401);
+      const b = await body(request);
+      if (String(b.action || '') !== 'delete') return fail('操作不合法');
+      const id = String(parts[2]);
+      if (!/^\d+$/.test(id)) return fail('编号不对');
+      await env.DB.prepare('DELETE FROM announcements WHERE id=?').bind(id).run();
+      return json({ ok: true });
     }
 
     /* ===== 控制台：账号 ===== */
@@ -340,19 +362,24 @@ export async function handleApi(request, env) {
     if (path === '/mine' && m === 'GET') {
       const s = await session(env, request);
       if (!s) return json({ wishes: [] });
-      const r = await env.DB.prepare(
-        'SELECT id,text,name,photo,status,created_at FROM wishes WHERE owner_token=? OR (user_id IS NOT NULL AND user_id=?) ORDER BY id DESC LIMIT 500'
-      ).bind(s.token, s.user_id || 0).all();
-      return json({ wishes: (r.results || []).map((w) => Object.assign(row(w), { status: w.status })) });
+      const u = await me(env, request);
+      const sel = 'SELECT id,text,name,photo,status,created_at FROM wishes ';
+      const r = u
+        ? await env.DB.prepare(sel + 'WHERE user_id=? ORDER BY id DESC LIMIT 500').bind(u.id).all()
+        : await env.DB.prepare(sel + 'WHERE owner_token=? AND user_id IS NULL ORDER BY id DESC LIMIT 500').bind(s.token).all();
+      return json({ wishes: (r.results || []).map((w) => Object.assign(row(w), { status: w.status })) }, 200, { 'Cache-Control': 'no-store' });
     }
     if (path === '/mine' && m === 'POST') {
       const s = await session(env, request);
       if (!s) return fail('请先登录或在本机投稿', 401);
       const b = await body(request), id = String(b.id || '');
-      const w = await env.DB.prepare('SELECT id,owner_token,user_id FROM wishes WHERE id=?').bind(id).first();
+      const w = await env.DB.prepare('SELECT id,owner_token,user_id,status FROM wishes WHERE id=?').bind(id).first();
       if (!w) return fail('找不到这条祝福');
-      if (!(await isAdmin(env, request)) && w.owner_token !== s.token && !(s.user_id && w.user_id === s.user_id))
+      const adm = await isAdmin(env, request);
+      if (!adm && w.owner_token !== s.token && !(s.user_id && w.user_id === s.user_id))
         return fail('只能改自己的祝福', 403);
+      if (String(b.action || '') !== 'delete' && w.status === 'approved')
+        return fail('已通过的祝福不能修改，只能删除');
       if (b.action === 'delete') {
         await env.DB.prepare('DELETE FROM wishes WHERE id=?').bind(id).run();
         return json({ ok: true });

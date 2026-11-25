@@ -622,17 +622,17 @@ function fromRows(rows){
  for(i=0;i<a.length;i++)set[a[i]]=1;
  return rows.map(function(r){
   var q=splitText(r.text),mine=!!set[r.id];   /* 我的：只认这台设备写过的，别处写的不混进来 */
-  return {dk:r.id,no:toNo(q?q.no:r.id),text:q?q.text:(r.text||''),by:r.name||'',img:r.photo||'',
+  return {dk:r.id,no:Number(r.id)||toNo(q?q.no:r.id),text:q?q.text:(r.text||''),by:r.name||'',img:r.photo||'',
     t:r.created_at?new Date(r.created_at).getTime():Date.now(),
-    owner:mine?MYKEY:'other',fixed:!!q,
+    owner:mine?MYKEY:'other',fixed:true,
     canDel:((q&&q.own)&&isOwner())||!!set[r.id]};   /* 别处认得出，但删不了你的 */
  });
 }
 function fromRow(r){
  var q=splitText(r.text);
- return {dk:r.id,no:toNo(q?q.no:r.id),text:q?q.text:(r.text||''),by:r.name||'',img:r.photo||'',
+ return {dk:r.id,no:Number(r.id)||toNo(q?q.no:r.id),text:q?q.text:(r.text||''),by:r.name||'',img:r.photo||'',
    t:r.created_at?new Date(r.created_at).getTime():Date.now(),
-   owner:MYKEY,canDel:true,fixed:!!q};   /* 刚在本机写的立刻进「我的」 */
+   owner:MYKEY,canDel:true,fixed:true};   /* 编号＝真实 id */
 }
 function findByNo(n){
  var t=toNo(n),i;if(!isFinite(t))return -1;
@@ -1465,39 +1465,31 @@ photoDel.onclick=function(){photoData='';showPhoto()};
 
 var sending=false,lastSentAt=0,SEND_GAP=3000;
 function send(){
- var txt=wText.value;                 /* 原样保留：缩进、空行、行尾空格都不吃 */
+ var txt=wText.value;
  if(!txt.trim()||sending)return;
  var wait=SEND_GAP-(Date.now()-lastSentAt);
  if(wait>0){toast('等 '+Math.ceil(wait/1000)+' 秒再放下一颗 ✦');return}
  if(wishes.length>=CONFIG.capacity)return;
  var by=wBy.value.trim()||'无名',img=photoData||'';
  var btn=document.getElementById('wSend'),old=btn.textContent;
- if(loadFailed){                 /* 本机模式：不等网络，立刻写好 */
+ function done(t){
   lastSentAt=Date.now();
-  pending.push({text:txt,by:by,img:img});savePending();
-  wishes.push({dk:'local_'+Date.now()+'_'+Math.random().toString(36).slice(2,6),no:nextNo(),
-    text:txt,by:by,img:img,t:Date.now(),owner:MYKEY,canDel:true});
-  normalizeNos(wishes);lastSig=sigOf(wishes);pickBatch(wishes.length-1);
   wText.value='';wBy.value='';photoData='';showPhoto();saveDraft();resetSheet();
-  btn.textContent=old;toast('已 放 进 星 宙 ✦');
+  sending=false;btn.textContent=old;toast(t);
+  try{renderMine()}catch(e){}
+ }
+ if(loadFailed){
+  pending.push({text:txt,by:by,img:img});savePending();
+  done('已 存 好 · 联 网 后 提 交 审 核 ✦');
   return;
  }
  sending=true;btn.textContent='· · ·';
  STORE.add({text:txt,by:by,img:img}).then(function(w){
-  lastSentAt=Date.now();
-  wishes.push(w);lastSig=sigOf(wishes);pickBatch(wishes.length-1);
-  wText.value='';wBy.value='';photoData='';showPhoto();saveDraft();resetSheet();
-  sending=false;btn.textContent=old;
+  /* 只记归属，绝不画星：审核通过后才会出现在星宙 */
+  done('已 提 交 · 审 核 通 过 后 才 会 亮 起 ✦');
  }).catch(function(){
-  /* 云端一时写不进去：先稳稳存在本机 + 立刻显示这颗，联网自动补传，绝不丢 */
-  sending=false;lastSentAt=Date.now();
   pending.push({text:txt,by:by,img:img});savePending();
-  var tmp={dk:'local_'+Date.now()+'_'+Math.random().toString(36).slice(2,6),no:nextNo(),
-    text:txt,by:by,img:img,t:Date.now(),owner:MYKEY,canDel:true};
-  wishes.push(tmp);pickBatch(wishes.length-1);
-  wText.value='';wBy.value='';photoData='';showPhoto();saveDraft();resetSheet();
-  btn.textContent=old;
-  toast('已 存 好 · 联 网 后 自 动 放 进 星 宙 ✦');
+  done('已 存 好 · 联 网 后 提 交 审 核 ✦');
   setTimeout(flushPending,1500);
  });
 }
@@ -1578,7 +1570,7 @@ function openAll(list,kw){
   var by=w.by&&w.by.trim()?w.by:'无名';
   var tx=w.text||'',cut=tx.length>70?tx.slice(0,70)+'…':tx;
   return '<div class="it" data-idx="'+i+'"><div class="bd">'+
-   '<div class="no">第 '+w.no+' 颗 · '+ds+' · '+esc(by)+'</div>'+
+   '<div class="no">✦ 第 '+w.no+' 颗 · '+ds+' · '+esc(by)+'</div>'+
    '<div class="tx">'+esc(cut)+'</div>'+
    (w.img?'<img class="im" src="'+w.img+'" alt="">':'')+'</div></div>';
  }).join('');
@@ -2450,7 +2442,7 @@ body.immerse #xzBar,body.immerse #xzModal{display:none!important}
       var list=r.wishes||[];
       if(!list.length){box.innerHTML='<div class="xz-empty">还没有祝福星</div>';return}
       box.innerHTML=list.slice(0,100).map(function(w){
-        return '<div class="xz-item"><div class="t"><span class="nm">✦ '+esc(w.name||'无名')+'</span>'+
+        return '<div class="xz-item"><div class="t"><span class="nm">✦ 第 '+w.id+' 颗 · '+esc(w.name||'无名')+'</span>'+
           '<span class="xz-tag '+(w.status||'approved')+'">'+(TAG[w.status]||'已 点 亮')+'</span></div>'+
           '<p class="tx">'+esc(plain(w.text).slice(0,90))+'</p>'+
           '<div class="xz-row"><button class="xz-chip warn" data-del="'+w.id+'">删 除</button></div></div>';
@@ -2496,6 +2488,7 @@ body.immerse #xzBar,body.immerse #xzModal{display:none!important}
       box.innerHTML=list.map(function(w){
         return '<div class="xz-item"><div class="t">'+
           '<label class="xz-pick"><input type="checkbox" data-pick="'+w.id+'"></label>'+
+          '<span class="xz-hint" style="flex:1">✦ 第 '+w.id+' 颗</span>'+
           '<span class="xz-tag '+esc(w.status)+'">'+(TAG[w.status]||w.status)+'</span></div>'+
           '<div class="t" style="margin-top:.25rem"><span class="nm">'+esc(w.name||'无名')+'</span>'+
           '<span class="tm">'+fmt(w.created_at)+'</span></div>'+
@@ -2553,8 +2546,15 @@ body.immerse #xzBar,body.immerse #xzModal{display:none!important}
         return '<div class="xz-item"><div class="t"><span class="nm">✦ '+esc(n.author||'星宙')+'</span>'+
           '<span class="tm">'+fmt(n.created_at)+'</span></div>'+
           (n.photo?'<img class="notice-img" src="'+esc(n.photo)+'" alt="">':'')+
-          '<p class="tx">'+esc(n.text)+'</p></div>';
+          '<p class="tx">'+esc(n.text)+'</p>'+
+          (XZ.admin?'<div class="xz-row"><button class="xz-chip warn" data-ndel="'+n.id+'">撤 除</button></div>':'')+
+          '</div>';
       }).join('');
+      $$('[data-ndel]',box).forEach(function(b){b.onclick=async function(){
+        if(!confirm('撤除这条通知？'))return;
+        try{await api('POST','/admin/announce/'+b.dataset.ndel,{action:'delete'});
+          toast('已撤除');loadNoticeList()}catch(e){msg(e.message)}
+      }});
     }catch(e){box.innerHTML='<div class="xz-empty">'+esc(e.message)+'</div>'}
   }
 
@@ -2604,7 +2604,7 @@ body.immerse #xzBar,body.immerse #xzModal{display:none!important}
       box.innerHTML=list.slice(0,200).map(function(w){
         return '<div class="it"><div class="bd">'+
           '<div class="no"><span class="xz-tag '+esc(w.status)+'" style="font-size:9px;padding:.05rem .4rem;border-radius:99px;border:1px solid rgba(190,160,255,.3)">'+
-          (TAG[w.status]||'已 点 亮')+'</span></div>'+
+          (TAG[w.status]||'已 点 亮')+'</span> · ✦ 第 '+w.id+' 颗</div>'+
           '<div class="tx">'+esc(plain(w.text))+'</div>'+
           (w.photo?'<img class="im" src="'+esc(w.photo)+'" alt="">':'')+'</div>'+
           '<span class="xz-del" data-id="'+w.id+'" style="cursor:pointer">删 除</span></div>';
