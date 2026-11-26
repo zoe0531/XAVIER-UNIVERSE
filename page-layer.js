@@ -87,8 +87,14 @@ STORE.add=function(w,rid){
       body:JSON.stringify({text:w.text,name:w.by,photo:p.full||null,
         thumb:p.thumb||null,request_id:rid})}),9000);
   }.bind(this)).then(function(r){
-    if(r.status===429)return r.json().then(function(j){throw new Error(j.error||'稍 后 再 试')});
-    if(!r.ok)throw new Error('add');return r.json();
+    /* 后端明确拒绝 → 带上原话、标记「不必重试」；网络/服务端错 → 才允许同票补 1 次 */
+    if(!r.ok)return r.json().catch(function(){return {}}).then(function(j){
+      var e;
+      if(j&&j.error){e=new Error(j.error);e.uzMsg=true;e.retryable=false}
+      else{e=new Error('add');e.retryable=(r.status>=500)}
+      throw e;
+    });
+    return r.json();
   }).then(function(a){var r=Array.isArray(a)?a[0]:a;
     if(!r||r.id===undefined)throw new Error('add');
     myIdsAdd(r.id);

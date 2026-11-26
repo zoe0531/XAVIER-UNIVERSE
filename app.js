@@ -1017,15 +1017,18 @@ function send(){
   if(w&&typeof w.total==='number')showMyTotal(w.total);
   try{renderMine()}catch(e){}
  }
- function giveUp(){
+ function giveUp(e){
   unlock();
-  toast('没 发 出 去 · 请 再 点 一 次 ✦');   /* 内容还在，用户重新点=新票=合法新增 */
+  /* 超长 / 限流 / 禁言 → 后端原话；纯网络失败 → 统一可重试文案 */
+  var m=(e&&e.uzMsg&&e.message)?e.message:'没 发 出 去 · 请 再 点 一 次 ✦';
+  toast(m);   /* 内容还在，用户重新点=新票=合法新增 */
  }
  lock();
  function attempt(retried){
-  STORE.add({text:txt,by:by,img:img},ticket).then(succeed).catch(function(){
-   if(!retried){setTimeout(function(){attempt(true)},1200);return}  /* 同票最多重试 1 次 */
-   giveUp();
+  STORE.add({text:txt,by:by,img:img},ticket).then(succeed).catch(function(e){
+   /* 明确拒绝立刻说真话、不空等；只有网络/服务端错才同票补 1 次 */
+   if(!retried&&!(e&&e.uzMsg)){setTimeout(function(){attempt(true)},1200);return}
+   giveUp(e);
   });
  }
  attempt(false);
