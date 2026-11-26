@@ -7,7 +7,7 @@
   var $=function(s,r){return (r||document).querySelector(s)};
   var $$=function(s,r){return Array.from((r||document).querySelectorAll(s))};
   var XZ={admin:false,owner:false,user:null,view:'',status:'pending',muted:false,globalMute:false,advanced:false};
-  var TAG={pending:'未 审 核',approved:'已 点 亮',rejected:'未 通 过'};
+  var TAG={pending:'未 审 核',approved:'已 亮 起',rejected:'未 通 过'};
   var plain=function(t){return String(t||'').replace(/\u2060/g,'')};
 
   function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){
@@ -39,7 +39,7 @@
     '<div id="xzBody"></div><div id="xzMsg"></div></div>';
   document.body.appendChild(modal);
 
-  /* 只在进入星海后显示符号条（跟随原站 #hud 的 on 状态） */
+  /* 只在进入星 宙后显示符号条（跟随原站 #hud 的 on 状态） */
   function syncBar(){
     var hud=document.getElementById('hud');
     bar.className=(hud&&hud.className.indexOf('on')>=0)?'on':'';
@@ -52,7 +52,7 @@
   $('#xzClose').onclick=function(){modal.className=''};
   modal.addEventListener('click',function(e){if(e.target===modal)modal.className=''});
 
-  /* 弹窗开着时不让星海跟着转 */
+  /* 弹窗开着时不让星 宙跟着转 */
   try{
     var _any=anyPanelOpen;
     window.anyPanelOpen=function(){return _any()||modal.className==='on'};
@@ -225,7 +225,7 @@
       if(!list.length){box.innerHTML='<div class="xz-empty">还没有祝福星</div>';return}
       box.innerHTML=list.slice(0,100).map(function(w){
         return '<div class="xz-item"><div class="t"><span class="nm">✦ 第 '+w.id+' 颗 · '+esc(w.name||'无名')+'</span>'+
-          '<span class="xz-tag '+(w.status||'approved')+'">'+(TAG[w.status]||'已 点 亮')+'</span></div>'+
+          '<span class="xz-tag '+(w.status||'approved')+'">'+(TAG[w.status]||'已 亮 起')+'</span></div>'+
           '<p class="tx">'+esc(plain(w.text).slice(0,90))+'</p>'+
           '<div class="xz-row"><button class="xz-chip warn" data-del="'+w.id+'">删 除</button></div></div>';
       }).join('');
@@ -241,7 +241,7 @@
     }catch(e){box.innerHTML='<div class="xz-empty">'+esc(e.message)+'</div>'}
   }
 
-  /* ── 审 核：未审核 / 已审核都标明，通过后星海里不挂任何审核字样 ── */
+  /* ── 审 核：未审核 / 已审核都标明，通过后星 宙里不挂任何审核字样 ── */
   function renderReview(){
     if(!XZ.admin){$('#xzBody').innerHTML='<div class="xz-empty">只有管理员能审核</div>';return}
     $('#xzBody').innerHTML=
@@ -380,7 +380,7 @@
     });
   }
 
-  /* 「我 的」只显示自己写的，并标明未审核 / 已点亮，不再混进别人的星 */
+  /* 「我 的」只显示自己写的，并标明未审核 / 已亮起，不再混进别人的星 */
   window.renderMine=function(){
     var box=document.getElementById('mineList'),num=document.getElementById('mineNum');
     box.innerHTML='<div class="none">读取中…</div>';
@@ -391,7 +391,7 @@
       box.innerHTML=list.slice(0,200).map(function(w){
         return '<div class="it"><div class="bd">'+
           '<div class="no"><span class="xz-tag '+esc(w.status)+'" style="font-size:9px;padding:.05rem .4rem;border-radius:99px;border:1px solid rgba(190,160,255,.3)">'+
-          (TAG[w.status]||'已 点 亮')+'</span> · ✦ 第 '+w.id+' 颗</div>'+
+          (TAG[w.status]||'已 亮 起')+'</span> · ✦ 第 '+w.id+' 颗</div>'+
           '<div class="tx">'+esc(plain(w.text))+'</div>'+
           (w.photo?'<img class="im" src="'+esc(w.photo)+'" alt="">':'')+'</div>'+
           '<span class="xz-del" data-id="'+w.id+'" style="cursor:pointer">删 除</span></div>';

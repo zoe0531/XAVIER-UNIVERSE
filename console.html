@@ -183,7 +183,7 @@ body{background-image:
         网站为爱发电，尚有不足之处，请狐狐妃妃球球花花文明发言。<br><br>
         祝福由投稿者本人写下，照片与语音也归投稿者所有；如希望删除，可在「我的祝福」里自行移除，或联系管理员。<br><br>
         新写的祝福会先交给管理员审核，通过之后正式存于星宙中，可自行查看。<br><br>
-        页面与交互为本站独立制作，未经许可，请勿复用本站代码、界面设计或美术素材，谢谢。
+        未经允许，请勿对本站进行修改、二次改动等相关操作，谢谢
       </p>
     </div>
 
@@ -296,7 +296,7 @@ body{background-image:
       var head='<div class="muted" style="margin-bottom:.65rem">共 '+
         (r.total==null?list.length:r.total)+' 条</div>';
       if(!list.length){box.innerHTML=head+'<p class="empty">还没有写过祝福</p>';return}
-      var tg={pending:'未 审 核',approved:'已 点 亮',rejected:'未 通 过'};
+      var tg={pending:'未 审 核',approved:'已 亮 起',rejected:'未 通 过'};
       box.innerHTML=head+list.map(function(w){return ''+
         '<div class="item" data-id="'+w.id+'">'+
           '<div class="top"><span class="nm">✦ 第 '+w.id+' 颗 · '+esc(w.name||'无名')+'</span>'+
@@ -326,7 +326,7 @@ body{background-image:
   /* ── 审核 ── */
   var RV={page:1,items:[],total:0,pages:0,status:'pending',busy:false};
   function drawReview(box){
-    var tg={pending:'未 审 核',approved:'已 点 亮',rejected:'未 通 过'};
+    var tg={pending:'未 审 核',approved:'已 亮 起',rejected:'未 通 过'};
     var head='<div class="muted" style="margin-bottom:.65rem">共 '+RV.total+
       ' 条 / 已加载 '+RV.items.length+' 条</div>';
     var h=RV.items.map(function(w){return ''+

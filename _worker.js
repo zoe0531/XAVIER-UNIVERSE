@@ -660,7 +660,7 @@ export async function handleApi(request, env) {
         if (act === 'approve' && w.status !== 'approved') passed.push(w);
       }
       if (passed.length) await markDirty(env);
-      if (passed.length) await safeNotify(env, `${passed.length} 颗星星已点亮`,
+      if (passed.length) await safeNotify(env, `${passed.length} 颗星星已亮起`,
         passed.slice(0, 5).map((w, i) => `${i + 1}. ${w.name}：${plain(w.text).slice(0, 80)}`));
       return json({ ok: true, count: ids.length, approved: passed.length });
     }
@@ -674,7 +674,7 @@ export async function handleApi(request, env) {
       else if (b.action === 'approve' || b.action === 'reject') {
         await env.DB.prepare('UPDATE wishes SET status=? WHERE id=?').bind(b.action === 'approve' ? 'approved' : 'rejected', id).run();
         if (b.action === 'approve' && w.status !== 'approved')
-          await safeNotify(env, '一颗星星已点亮', [`署名：${w.name}`, `内容：${plain(w.text)}`, `时间：${when()}`]);
+          await safeNotify(env, '一颗星星已亮起', [`署名：${w.name}`, `内容：${plain(w.text)}`, `时间：${when()}`]);
       } else return fail('操作不合法');
       await markDirty(env);
       return json({ ok: true });

@@ -25,7 +25,7 @@ function light(r,mine){
 }
 
 /* ── 1. 首屏：只取 index + 第 1 页(24) + 130 颗随机星球元数据，绝不全量拉 ──
-   ver 没变就复用同一份数组：否则 20 秒同步 / 5 分钟兜底会把星海重新随机排一遍。
+   ver 没变就复用同一份数组：否则 20 秒同步 / 5 分钟兜底会把星 宙重新随机排一遍。
    只有审核通过、删除、编辑让 ver+1 时才真正重取（视觉与原来完全一致）。 */
 var _pool=null,_poolVer=-1;
 STORE.load=function(){
@@ -116,8 +116,8 @@ function loadPage(n,reset){
   if(P.busy)return;
   var box=document.getElementById('allList'),num=document.getElementById('allNum');
   P.busy=true;
-  if(reset){box.innerHTML='<div class="none">正在点亮星海…</div>';
-    num.textContent='正在点亮星海…'}
+  if(reset){box.innerHTML='<div class="none">加 载 中 …</div>';
+    num.textContent='加 载 中 …'}
   var u=P.mode==='search'
     ?'/api/search?q='+encodeURIComponent(P.kw)+'&page='+n
     :'/api/page/'+n+'?v='+P.ver;

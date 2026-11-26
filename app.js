@@ -1,7 +1,7 @@
 
 /* ============================================================
    星宙 · 云端共享版
-   —— 斜向银河星海 + 密集星尘 + 极少量随机小流星 + 亮白五角星
+   —— 斜向银河星 宙 + 密集星尘 + 极少量随机小流星 + 亮白五角星
    —— 所有人读写同一张 Supabase 表，编号用自增 id，删了永不重排
    —— 拖动绕整颗宇宙转圈；每批随机抽 130 颗铺满球面，支持 5 万星位
    —— 零预置；祝福可带照片；管理入口走服务端校验
@@ -39,7 +39,7 @@ window.__xzOnce=function(fn){
  };
 };
 /* 预览窗 / 断网 / 跨域被拦：请求既不成功也不失败时，2.5 秒后一律转「本机可用」，
-   绝不把按钮卡在「···」，也绝不剩一张空背景。云端一通，自动并回共享星海。 */
+   绝不把按钮卡在「···」，也绝不剩一张空背景。云端一通，自动并回共享星 宙。 */
 function withTimeout(p,ms){return new Promise(function(res,rej){
  var t=setTimeout(function(){rej(new Error('timeout'))},ms);
  p.then(function(v){clearTimeout(t);res(v)},function(e){clearTimeout(t);rej(e)});
@@ -67,7 +67,7 @@ function cacheSet(list){
  }
 }
 function localKept(){ return []; }   /* 本机假星已废弃，保留空函数只为兼容旧引用 */
-/* WebGL 一旦不可用，自动切 2D 星海：照样转、照样点、照样发、照样查 */
+/* WebGL 一旦不可用，自动切 2D 星 宙：照样转、照样点、照样发、照样查 */
 var glOK=false,fbCv=null,fbCtx=null,fbPts=[],fbStars=[],fbAng=0;
 /* 旧版「失败存本地、联网批量补发」是突然多出几条的根源，整条链路已删除。
    启动时顺手清掉历史队列和缓存里的本机假星，永不重放。 */
@@ -234,7 +234,7 @@ function tryPass(){
 pw.addEventListener('input',function(){if(pw.value.length>=4)setTimeout(tryPass,120)});
 pw.addEventListener('keydown',function(e){if(e.key==='Enter')tryPass()});
 
-/* ---------- 贴图：柔光点 / 斜向银河星海 / 短流星 ---------- */
+/* ---------- 贴图：柔光点 / 斜向银河星 宙 / 短流星 ---------- */
 /* 背景星尘：纯柔光小圆点，没有任何十字芒，所以画面里不会再冒出"四个角" */
 function sparkTexture(){
  var c=document.createElement('canvas');c.width=c.height=64;var x=c.getContext('2d');
@@ -245,7 +245,7 @@ function sparkTexture(){
  x.fillStyle=g;x.fillRect(0,0,64,64);
  return new THREE.CanvasTexture(c);
 }
-/* 星海底图：斜向银河（左上→右下）+ 暗尘埃 + 紫青絮状云 + 密集细星尘
+/* 星 宙底图：斜向银河（左上→右下）+ 暗尘埃 + 紫青絮状云 + 密集细星尘
    —— 没有横向光带、没有圆形行星、没有硬边，全程序画，零外部图 */
 function paintNebula(){
  var c=document.createElement('canvas');c.width=640;c.height=1280;var x=c.getContext('2d');
@@ -425,7 +425,7 @@ function resetMeteor(m,initial){
  m.len=11+Math.random()*20;
  m.tilt=.46+(Math.random()-.5)*.20;          /* 斜着划，不是竖着掉 */
 }
-/* ---- 备用星海：纯 Canvas 2D，WebGL 开不出来时全功能照常 ---- */
+/* ---- 备用星 宙：纯 Canvas 2D，WebGL 开不出来时全功能照常 ---- */
 function initFallback2D(){
  if(fbCv)return;
  var skyEl=document.getElementById('sky');
@@ -655,7 +655,7 @@ document.addEventListener('visibilitychange',function(){
  if(!document.hidden&&running&&!raf)raf=requestAnimationFrame(tick);
 });
 /* 有些「预览浮层」会把页面当成后台、直接掐掉 rAF。
-   帧停了 260ms 以上就用低频兜底推一帧，星海/星球照样慢慢转，不会定住。 */
+   帧停了 260ms 以上就用低频兜底推一帧，星 宙/星球照样慢慢转，不会定住。 */
 var lastFrameAt=0;
 setInterval(function(){
  var now=Date.now();
@@ -712,7 +712,7 @@ addEventListener('online',function(){if(running){retryCount=0;hardReload()}});
    免费版 Supabase 磁盘 IO 有限：轮询改成「只看最新 1 行的 id」，
    没有新祝福就完全不读表；只有真的多了/少了，才拉一次全量。
    访客越多越省，别人写的照样 20 秒内出现；每 5 分钟兜底全量一次防漏。
-   断网或空响应一律保留现有星海，绝不误清空。 */
+   断网或空响应一律保留现有星 宙，绝不误清空。 */
 STORE.peek=function(){
  return withTimeout(fetch(this.base+'?select=id&order=id.desc&limit=1',
    {headers:sbH({'Cache-Control':'no-cache'}),cache:'no-store'}),2500)
@@ -1206,8 +1206,8 @@ window.__xzBind(document.getElementById('mineClose'),'onclick',function(e){e.sto
 minePanel.addEventListener('pointerdown',function(e){e.stopPropagation()});
 
 
-/* ---------- 粒子星球：紫色球体 + 香槟金细环，实时自转，点一下推近穿进星海 ----------
-   独立 renderer / scene / camera，与底下那片星海完全隔离；穿入后即释放。 */
+/* ---------- 粒子星球：紫色球体 + 香槟金细环，实时自转，点一下推近穿进星 宙 ----------
+   独立 renderer / scene / camera，与底下那片星 宙完全隔离；穿入后即释放。 */
 var planet=document.getElementById('planet'),pc=document.getElementById('pc');
 var sky=document.getElementById('sky'),skyVisible=false,zoomAcc=0,pCooldown=0;
 var immersed=false;
@@ -1235,7 +1235,7 @@ function closeFloating(){
   if(el)el.className=el.className.replace(/\bon\b/g,'').trim();
  });
 }
-/* 左上角退出键 → 星海缩小、退回粒子星球；星球轻触 → 放大进入星海 */
+/* 左上角退出键 → 星 宙缩小、退回粒子星球；星球轻触 → 放大进入星 宙 */
 function backToPlanet(){
  if(skyBusy())return;
  skyVisible=false;zoomAcc=0;
@@ -1511,7 +1511,7 @@ function showPlanet(){
  }else setTimeout(initPlanet,60);           /* 首次才新建上下文 */
 }
 function pFallback(){
- /* 极老机型开不出第二个 WebGL：不卡住，直接放行到星海；没有星球页就别留退出键 */
+ /* 极老机型开不出第二个 WebGL：不卡住，直接放行到星 宙；没有星球页就别留退出键 */
  document.getElementById('exitBtn').style.display='none';
  planet.className='out';
  sky.className='';sky.style.transform='';skyVisible=true;
@@ -1520,7 +1520,7 @@ function pFallback(){
 function pFinish(){
  pPierce=false;pAlive=false;
  if(pRAF)cancelAnimationFrame(pRAF);
- planet.className='out';                       /* 紫雾淡出，星海「放大」铺满 */
+ planet.className='out';                       /* 紫雾淡出，星 宙「放大」铺满 */
  sky.className='';
  sky.style.transition='none';
  sky.style.transform='scale(.30)';sky.style.opacity='.25';
@@ -1528,7 +1528,7 @@ function pFinish(){
  sky.style.transition='transform 1.0s cubic-bezier(.2,.72,.2,1),opacity 1.0s ease';
  sky.style.transform='scale(1)';sky.style.opacity='1';
  skyVisible=true;zoomAcc=0;resetDrag();
- tgtDist=205;dist=205;                         /* 每次重新进来都回到完整星海 */
+ tgtDist=205;dist=205;                         /* 每次重新进来都回到完整星 宙 */
  document.getElementById('hud').className='on';
  if(!running)requestAnimationFrame(function(){if(!running)enterSky()});  /* 让放大动画先起步，别被首次初始化卡住 */
  setTimeout(function(){
@@ -1542,10 +1542,10 @@ function pierce(){
 }
 planet.addEventListener('pointerdown',function(e){e.stopPropagation();pierce()});
 
-/* 双指捏合 / 滚轮：只把星海本身拉近拉远，不再退回星球。
+/* 双指捏合 / 滚轮：只把星 宙本身拉近拉远，不再退回星球。
    退回星球只走左上角那枚小箭头。 */
 try{initGL()}catch(e){glOK=false;try{initFallback2D()}catch(e2){}}
-/* 封面与密码输入保留：输 1016 → 粒子星球 → 点一下才进星海，别人进不来乱弄 */
+/* 封面与密码输入保留：输 1016 → 粒子星球 → 点一下才进星 宙，别人进不来乱弄 */
 gate.style.display='';
 skyVisible=false;
 document.getElementById('hud').className='';
