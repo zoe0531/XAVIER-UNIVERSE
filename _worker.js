@@ -42,9 +42,21 @@ function cookies(req) {
 }
 function setCookie(name, val, req, age) {
   const https = new URL(req.url).protocol === 'https:';
-  return `${name}=${encodeURIComponent(val)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${age}${https ? '; Secure' : ''}`;
+  /* age=null → 会话 cookie（游客退出重进清空）；age>0 → 持久（已登录账号不掉线） */
+  const parts = [name + '=' + encodeURIComponent(val), 'HttpOnly', 'SameSite=Lax', 'Path=/'];
+  if (age) parts.push('Max-Age=' + age);
+  if (https) parts.push('Secure');
+  return parts.join('; ');
 }
 const clearCookie = (n, req) => setCookie(n, '', req, 0);
+/* ===== v7 分页改造常量 ===== */
+const PAGE_SIZE = 24;                 // 每页条数（唯一可配常量）
+const MAX_TEXT = 2000;                // 文本长度上限
+const MAX_IMG_B64 = 2800000;          // 单图 base64 上限 ≈2MB
+const MAX_THUMB_B64 = 400000;         // 缩略图上限
+const RATE_WIN = 60000, RATE_MAX = 30;// 游客异常高频：60s 内 30 次，正常连点 3 次不受影响
+const CACHE_PAGE = 'public, s-maxage=300, stale-while-revalidate=600';
+const summaryOf = (t) => stripMark(t).replace(/\s+/g, ' ').slice(0, 30);
 async function body(req) { try { return await req.json(); } catch (e) { return {}; } }
 
 /* ── 身份：匿名设备也有 token，登录只是给它绑上 user_id ── */
@@ -59,7 +71,7 @@ async function ensureSession(env, req) {
   const t = rnd(24);
   await env.DB.prepare('INSERT INTO sessions (token,user_id,role,created_at) VALUES (?,NULL,?,?)')
     .bind(t, 'visitor', Date.now()).run();
-  return { s: { token: t, user_id: null, role: 'visitor' }, cookie: setCookie('xz_sid', t, req, 31536000) };
+  return { s: { token: t, user_id: null, role: 'visitor' }, cookie: setCookie('xz_sid', t, req, null) };
 }
 async function me(env, req) {
   const s = await session(env, req);
@@ -113,6 +125,13 @@ async function ensureSchema(env) {
   try { await env.DB.prepare('CREATE UNIQUE INDEX IF NOT EXISTS uq_wishes_request_id ON wishes(request_id)').run(); } catch (e) {}
   /* 图片压缩后单独存这张表，wishes 行里只留 /api/img/<id> 链接，不塞 base64 */
   try { await env.DB.prepare('CREATE TABLE IF NOT EXISTS wish_images (id INTEGER PRIMARY KEY AUTOINCREMENT, mime TEXT, data TEXT, created_at INTEGER)').run(); } catch (e) {}
+  /* v7：摘要、缩略图、分片表、限流表 —— 全部 CREATE IF NOT EXISTS / try-catch，重复执行安全 */
+  try { await env.DB.prepare('ALTER TABLE wishes ADD COLUMN summary TEXT').run(); } catch (e) {}
+  try { await env.DB.prepare('ALTER TABLE wish_images ADD COLUMN thumb TEXT').run(); } catch (e) {}
+  try { await env.DB.prepare('ALTER TABLE wish_images ADD COLUMN mime_thumb TEXT').run(); } catch (e) {}
+  try { await env.DB.prepare('CREATE TABLE IF NOT EXISTS wish_pages (page_no INTEGER PRIMARY KEY, ver INTEGER, data TEXT)').run(); } catch (e) {}
+  try { await env.DB.prepare('CREATE TABLE IF NOT EXISTS rate_limits (k TEXT, win INTEGER, cnt INTEGER, PRIMARY KEY(k,win))').run(); } catch (e) {}
+  try { await env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_wishes_approved ON wishes(status,id)').run(); } catch (e) {}
   _schemaReady = true;
 }
 
@@ -172,13 +191,15 @@ async function myTotal(env, s) {
 }
 
 /* 图片压缩后单独存表；wishes 行里只留 /api/img/<id> 链接，绝不塞 base64 */
-async function storePhoto(env, raw, now) {
-  const v = String(raw || '').slice(0, 6000000);
+async function storePhoto(env, raw, thumbRaw, now) {
+  const v = String(raw || '').slice(0, MAX_IMG_B64);
+  const tv = String(thumbRaw || '').slice(0, MAX_THUMB_B64);
   const dm = /^data:(image\/[A-Za-z0-9.+-]+);base64,([\s\S]*)$/i.exec(v);
   if (dm) {
+    const td = /^data:(image\/[A-Za-z0-9.+-]+);base64,([\s\S]*)$/i.exec(tv);
     const ir = await env.DB.prepare(
-      'INSERT INTO wish_images (mime,data,created_at) VALUES (?,?,?)'
-    ).bind(dm[1], dm[2], now).run();
+      'INSERT INTO wish_images (mime,data,thumb,mime_thumb,created_at) VALUES (?,?,?,?,?)'
+    ).bind(dm[1], dm[2], td ? td[2] : '', td ? td[1] : '', now).run();
     const id = ir.meta && ir.meta.last_row_id != null ? ir.meta.last_row_id : null;
     return { photo: id != null ? '/api/img/' + id : '', imgId: id };
   }
@@ -196,6 +217,70 @@ function row(r) {
     created_at: new Date(Number(r.created_at) || Date.now()).toISOString() };
 }
 
+
+/* ===== v7 读路径：分片存 D1，CDN 按 ver 边缘缓存 ===== */
+async function getMeta(env, k, def) {
+  try { const r = await env.DB.prepare('SELECT value FROM settings WHERE key=?').bind(k).first();
+        return r ? String(r.value) : def; } catch (e) { return def; }
+}
+async function setMeta(env, k, v) {
+  try { await env.DB.prepare('INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').bind(k, String(v)).run(); } catch (e) {}
+}
+async function backfill(env) {
+  try {
+    if ((await getMeta(env, 'summary_done', '0')) === '1') return;
+    const rows = (await env.DB.prepare('SELECT id,text FROM wishes WHERE summary IS NULL LIMIT 200').bind().all()).results || [];
+    for (const r of rows) {
+      await env.DB.prepare('UPDATE wishes SET summary=? WHERE id=?').bind(summaryOf(r.text), r.id).run();
+    }
+    if (rows.length < 200) await setMeta(env, 'summary_done', '1');
+  } catch (e) {}
+}
+async function ensureIndex(env) {
+  const c = await env.DB.prepare("SELECT COUNT(*) AS n FROM wishes WHERE status='approved'").bind().first();
+  const total = Number((c && c.n) || 0);
+  const ver = Number(await getMeta(env, 'pages_ver', '0')) || 0;
+  return { total: total, pages: Math.ceil(total / PAGE_SIZE), ver: ver, size: PAGE_SIZE };
+}
+async function markDirty(env) {
+  const ver = (Number(await getMeta(env, 'pages_ver', '0')) || 0) + 1;
+  await setMeta(env, 'pages_ver', String(ver));
+  return ver;
+}
+/* 列表项：只回 id / 编号 / 摘要 / 缩略图 / 时间 / 是否有图，绝不回全文或原图 */
+function listItem(r) {
+  const m = /^\/api\/img\/(\d+)$/.exec(String(r.photo || ''));
+  const sum = (r.summary != null && r.summary !== '') ? r.summary : summaryOf(r.text);
+  return {
+    id: Number(r.id), no: Number(r.id), name: r.name || '',
+    summary: sum,
+    thumb: m ? ('/api/img/' + m[1] + '?thumb=1') : (r.photo || ''),
+    has_img: !!(m || r.photo),
+    created_at: new Date(Number(r.created_at) || Date.now()).toISOString()
+  };
+}
+async function buildPage(env, n, ver) {
+  const rows = (await env.DB.prepare(
+    "SELECT id,name,photo,summary,text,created_at FROM wishes WHERE status='approved' ORDER BY id ASC LIMIT ? OFFSET ?"
+  ).bind(PAGE_SIZE, (n - 1) * PAGE_SIZE).all()).results || [];
+  const items = rows.map(listItem);
+  await env.DB.prepare(
+    'INSERT INTO wish_pages(page_no,ver,data) VALUES(?,?,?) ON CONFLICT(page_no) DO UPDATE SET ver=excluded.ver,data=excluded.data'
+  ).bind(n, ver, JSON.stringify({ page: n, ver: ver, items: items })).run();
+  return items;
+}
+async function rateGuard(env, request, s) {
+  const win = Math.floor(Date.now() / RATE_WIN);
+  const ip = (request.headers.get('CF-Connecting-IP') || request.headers.get('X-Forwarded-For') || 'x').split(',')[0].trim();
+  const k = ip;   /* 按出口 IP 计，游客换 token 也挡得住；常量 RATE_MAX 可调 */
+  try {
+    await env.DB.prepare('DELETE FROM rate_limits WHERE win<?').bind(win - 1).run();
+    await env.DB.prepare('INSERT INTO rate_limits(k,win,cnt) VALUES(?,?,1) ON CONFLICT(k,win) DO UPDATE SET cnt=cnt+1').bind(k, win).run();
+    const r = await env.DB.prepare('SELECT cnt FROM rate_limits WHERE k=? AND win=?').bind(k, win).first();
+    return r && Number(r.cnt) > RATE_MAX;
+  } catch (e) { return false; }   /* 限流表异常绝不阻断正常投稿 */
+}
+
 /* ── 主路由（导出供测试） ── */
 export async function handleApi(request, env) {
   const url = new URL(request.url);
@@ -210,16 +295,73 @@ export async function handleApi(request, env) {
   try {
     /* ===== 单独存的图片：wishes 行只留这个链接 ===== */
     if (parts[0] === 'img' && parts[1] && m === 'GET') {
-      const r = await env.DB.prepare('SELECT mime,data FROM wish_images WHERE id=?').bind(parts[1]).first();
+      const r = await env.DB.prepare('SELECT mime,data,thumb,mime_thumb FROM wish_images WHERE id=?').bind(parts[1]).first();
       if (!r) return new Response('', { status: 404 });
+      const useT = q.get('thumb') === '1' && !!r.thumb;
+      const b64 = useT ? String(r.thumb) : String(r.data || '');
+      const mime = useT ? String(r.mime_thumb || r.mime || 'image/jpeg') : String(r.mime || 'image/jpeg');
       let bin;
-      try { bin = Uint8Array.from(atob(String(r.data || '')), (c) => c.charCodeAt(0)); }
+      try { bin = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)); }
       catch (e) { return new Response('', { status: 404 }); }
       return new Response(bin, { headers: {
-        'Content-Type': String(r.mime || 'image/jpeg'),
+        'Content-Type': mime,
         'Cache-Control': 'public, max-age=31536000, immutable',
         'X-Content-Type-Options': 'nosniff'
       }});
+    }
+
+
+    /* ===== v7 公开读：index / 分页 / 详情 / 搜索 / 采样 ===== */
+    if (path === '/index.json' && m === 'GET') {
+      await backfill(env);
+      return json(await ensureIndex(env), 200, { 'Cache-Control': 'no-store' });
+    }
+    if (parts[0] === 'page' && parts[1] && m === 'GET') {
+      const pn = Math.max(parseInt(parts[1], 10) || 1, 1);
+      const idx = await ensureIndex(env);
+      if (idx.total === 0 || pn > idx.pages)
+        return json({ page: pn, items: [], total: idx.total, pages: idx.pages, ver: idx.ver, size: PAGE_SIZE }, 200, { 'Cache-Control': CACHE_PAGE });
+      const cached = await env.DB.prepare('SELECT ver,data FROM wish_pages WHERE page_no=?').bind(pn).first();
+      let items;
+      if (cached && Number(cached.ver) === idx.ver && cached.data) {
+        try { items = (JSON.parse(cached.data).items) || []; } catch (e) { items = null; }
+      }
+      if (!items) items = await buildPage(env, pn, idx.ver);
+      return json({ page: pn, items: items, total: idx.total, pages: idx.pages, ver: idx.ver, size: PAGE_SIZE }, 200, { 'Cache-Control': CACHE_PAGE });
+    }
+    if (parts[0] === 'wish' && parts[1] && m === 'GET') {
+      const id = String(parts[1]);
+      if (!/^\d+$/.test(id)) return fail('编号不对');
+      const w = await env.DB.prepare('SELECT id,text,name,photo,created_at,status,owner_token,user_id FROM wishes WHERE id=?').bind(id).first();
+      if (!w) return json({ error: '找不到这颗星' }, 404);
+      const ss = await session(env, request);
+      const mine = ss && (ss.token === w.owner_token || (ss.user_id && ss.user_id === w.user_id));
+      if (w.status !== 'approved' && !mine && !(await isAdmin(env, request)))
+        return json({ error: '找不到这颗星' }, 404);
+      return json({ id: w.id, text: stripMark(w.text), name: w.name || '', photo: w.photo || '',
+        created_at: new Date(Number(w.created_at) || Date.now()).toISOString(), status: w.status },
+        200, { 'Cache-Control': 'no-store' });
+    }
+    if (path === '/search' && m === 'GET') {
+      const kw = String(q.get('q') || '').trim().slice(0, 60).replace(/[%_]/g, '');
+      const pg = Math.max(parseInt(q.get('page') || '1', 10) || 1, 1);
+      if (!kw) return json({ items: [], total: 0, pages: 0, page: 1 }, 200, { 'Cache-Control': 'no-store' });
+      const pat = '%' + kw + '%';
+      const cn = await env.DB.prepare(
+        "SELECT COUNT(*) AS n FROM wishes WHERE status='approved' AND (text LIKE ? OR name LIKE ? OR CAST(id AS TEXT)=?)"
+      ).bind(pat, pat, kw).first();
+      const total = Number((cn && cn.n) || 0);
+      const rows = (await env.DB.prepare(
+        "SELECT id,name,photo,summary,text,created_at FROM wishes WHERE status='approved' AND (text LIKE ? OR name LIKE ? OR CAST(id AS TEXT)=?) ORDER BY id DESC LIMIT ? OFFSET ?"
+      ).bind(pat, pat, kw, PAGE_SIZE, (pg - 1) * PAGE_SIZE).all()).results || [];
+      return json({ items: rows.map(listItem), total: total, pages: Math.ceil(total / PAGE_SIZE), page: pg }, 200, { 'Cache-Control': 'no-store' });
+    }
+    if (path === '/sample' && m === 'GET') {
+      const nn = Math.min(Math.max(parseInt(q.get('n') || '130', 10) || 130, 1), 300);
+      const rows = (await env.DB.prepare(
+        "SELECT id,name,photo,summary,text,created_at FROM wishes WHERE status='approved' ORDER BY RANDOM() LIMIT ?"
+      ).bind(nn).all()).results || [];
+      return json({ items: rows.map(listItem) }, 200, { 'Cache-Control': 'no-store' });
     }
 
     /* ===== 原站 STORE 专用：/api/wishes ===== */
@@ -253,8 +395,9 @@ export async function handleApi(request, env) {
       if (!/^[A-Za-z0-9_-]{8,80}$/.test(rid)) return fail('缺少 request_id');
       const text = String(b.text || '');
       if (!stripMark(text).trim()) return fail('先写点什么吧');
+      if (stripMark(text).length > MAX_TEXT) return fail('文字太长了');
       const name = String(b.name || '').slice(0, 40) || '无名';
-      const rawPhoto = String(b.photo || '').slice(0, 6000000);
+      const rawPhoto = String(b.photo || '').slice(0, MAX_IMG_B64);
       const now = Date.now();
 
       /* 同票已落库：直接把已存在那行当成功返回，不报错、不新增、不重复存图 */
@@ -266,8 +409,10 @@ export async function handleApi(request, env) {
         return withCookie(json([Object.assign(row(hit), { total })], 200, { 'Cache-Control': 'no-store' }), cookie);
       }
 
+      /* 同票重放不消耗限流配额；只挡游客异常高频，不按内容判、不合并行 */
+      if (await rateGuard(env, request, s)) return fail('稍 后 再 试', 429);
       /* 图片压缩后单独存表，wishes.photo 只留链接 */
-      const sp = await storePhoto(env, rawPhoto, now);
+      const sp = await storePhoto(env, rawPhoto, b.thumb, now);
       const photo = sp.photo, imgId = sp.imgId;
 
       /* 编号：全表最大 +1；删中间不补位；全清空归 1。
@@ -278,8 +423,8 @@ export async function handleApi(request, env) {
           const mx = await env.DB.prepare('SELECT MAX(id) AS m FROM wishes').bind().first();
           no = (mx && Number(mx.m) > 0) ? Number(mx.m) + 1 : 1;
           await env.DB.prepare(
-            'INSERT INTO wishes (id,request_id,owner_token,user_id,text,name,photo,status,created_at) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(request_id) DO NOTHING'
-          ).bind(no, rid, s.token, s.user_id, text, name, photo, 'pending', now).run();
+            'INSERT INTO wishes (id,request_id,owner_token,user_id,text,name,photo,status,created_at,summary) VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(request_id) DO NOTHING'
+          ).bind(no, rid, s.token, s.user_id, text, name, photo, 'pending', now, summaryOf(text)).run();
         } catch (e) { lastErr = e; }
         created = await env.DB.prepare(
           'SELECT id,text,name,photo,created_at FROM wishes WHERE request_id=?'
@@ -315,6 +460,7 @@ export async function handleApi(request, env) {
       if (!adm && !mine) return fail('没有权限删除这颗星星', 403);
       await dropPhoto(env, w.photo);
       await env.DB.prepare('DELETE FROM wishes WHERE id=?').bind(id).run();
+      await markDirty(env);
       return new Response('', { status: 200 });
     }
 
@@ -406,7 +552,7 @@ export async function handleApi(request, env) {
         .bind(email, name, ph, salt, isAdm, Date.now()).run();
       const u = await env.DB.prepare('SELECT id,email,name,is_admin FROM users WHERE email=?').bind(email).first();
       await env.DB.prepare('UPDATE sessions SET user_id=?,role=? WHERE token=?').bind(u.id, 'user', s.token).run();
-      return withCookie(json({ user: { id: u.id, email: u.email, name: u.name, is_admin: isAdm === 1 } }), cookie);
+      return withCookie(json({ user: { id: u.id, email: u.email, name: u.name, is_admin: isAdm === 1 } }), setCookie('xz_sid', s.token, request, 31536000));
     }
 
     if (path === '/login' && m === 'POST') {
@@ -416,7 +562,7 @@ export async function handleApi(request, env) {
       const u = await env.DB.prepare('SELECT id,email,name,password_hash,salt,is_admin FROM users WHERE email=?').bind(email).first();
       if (!u || !tseq(await pbkdf2(String(b.password || ''), u.salt), u.password_hash)) return fail('账户码或密码不对', 401);
       await env.DB.prepare('UPDATE sessions SET user_id=?,role=? WHERE token=?').bind(u.id, 'user', s.token).run();
-      return withCookie(json({ user: { id: u.id, email: u.email, name: u.name, is_admin: Number(u.is_admin) === 1 } }), cookie);
+      return withCookie(json({ user: { id: u.id, email: u.email, name: u.name, is_admin: Number(u.is_admin) === 1 } }), setCookie('xz_sid', s.token, request, 31536000));
     }
 
     if (path === '/logout' && m === 'POST') {
@@ -466,14 +612,16 @@ export async function handleApi(request, env) {
       if (b.action === 'delete') {
         await dropPhoto(env, w.photo);
         await env.DB.prepare('DELETE FROM wishes WHERE id=?').bind(id).run();
+        await markDirty(env);
         return json({ ok: true });
       }
       const text = String(b.text || ''), name = String(b.name || '').slice(0, 40) || '无名';
       /* 编辑路径同样只 UPDATE，图片单独存，wishes 行只留链接 */
-      const sp2 = await storePhoto(env, b.photo, Date.now());
+      const sp2 = await storePhoto(env, b.photo, b.thumb, Date.now());
       if (sp2.photo !== String(w.photo || '')) await dropPhoto(env, w.photo);
-      await env.DB.prepare('UPDATE wishes SET text=?,name=?,photo=?,status=? WHERE id=?')
-        .bind(text, name, sp2.photo, 'pending', id).run();
+      await env.DB.prepare('UPDATE wishes SET text=?,name=?,photo=?,status=?,summary=? WHERE id=?')
+        .bind(text, name, sp2.photo, 'pending', summaryOf(text), id).run();
+      await markDirty(env);
       await safeNotify(env, '一条祝福被修改，需重新审核', [`署名：${name}`, `内容：${plain(text)}`, `时间：${when()}`]);
       return json({ ok: true });
     }
@@ -483,11 +631,16 @@ export async function handleApi(request, env) {
       if (!(await isAdmin(env, request))) return fail('未授权', 401);
       const st = q.get('status') || 'pending';
       if (!['pending', 'approved', 'rejected', 'all'].includes(st)) return fail('状态不合法');
-      const base = 'SELECT id,text,name,photo,status,created_at FROM wishes';
-      const r = st === 'all'
-        ? await env.DB.prepare(base + ' ORDER BY id DESC LIMIT 500').bind().all()
-        : await env.DB.prepare(base + ' WHERE status=? ORDER BY id DESC LIMIT 500').bind(st).all();
-      return json({ wishes: (r.results || []).map((w) => Object.assign(row(w), { status: w.status })) });
+      const pg = Math.max(parseInt(q.get('page') || '1', 10) || 1, 1);
+      const sz = Math.min(Math.max(parseInt(q.get('size') || '24', 10) || 24, 1), 100);
+      const where = st === 'all' ? '' : ' WHERE status=?';
+      const args = st === 'all' ? [] : [st];
+      const cn = await env.DB.prepare('SELECT COUNT(*) AS n FROM wishes' + where).bind(...args).first();
+      const total = Number((cn && cn.n) || 0);
+      const base = 'SELECT id,text,name,photo,status,created_at FROM wishes' + where + ' ORDER BY id DESC LIMIT ? OFFSET ?';
+      const r = await env.DB.prepare(base).bind(...args, sz, (pg - 1) * sz).all();
+      return json({ wishes: (r.results || []).map((w) => Object.assign(row(w), { status: w.status })),
+        total: total, page: pg, size: sz, pages: Math.ceil(total / sz) }, 200, { 'Cache-Control': 'no-store' });
     }
     if (path === '/admin/wishes/batch' && m === 'POST') {
       if (!(await isAdmin(env, request))) return fail('未授权', 401);
@@ -506,6 +659,7 @@ export async function handleApi(request, env) {
         await env.DB.prepare('UPDATE wishes SET status=? WHERE id=?').bind(st, id).run();
         if (act === 'approve' && w.status !== 'approved') passed.push(w);
       }
+      if (passed.length) await markDirty(env);
       if (passed.length) await safeNotify(env, `${passed.length} 颗星星已点亮`,
         passed.slice(0, 5).map((w, i) => `${i + 1}. ${w.name}：${plain(w.text).slice(0, 80)}`));
       return json({ ok: true, count: ids.length, approved: passed.length });
@@ -522,6 +676,7 @@ export async function handleApi(request, env) {
         if (b.action === 'approve' && w.status !== 'approved')
           await safeNotify(env, '一颗星星已点亮', [`署名：${w.name}`, `内容：${plain(w.text)}`, `时间：${when()}`]);
       } else return fail('操作不合法');
+      await markDirty(env);
       return json({ ok: true });
     }
 

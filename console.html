@@ -293,9 +293,11 @@ body{background-image:
     var box=$('#mineList');
     try{
       var r=await api('GET','/mine'),list=r.wishes||[];
-      if(!list.length){box.innerHTML='<p class="empty">还没有写过祝福</p>';return}
+      var head='<div class="muted" style="margin-bottom:.65rem">共 '+
+        (r.total==null?list.length:r.total)+' 条</div>';
+      if(!list.length){box.innerHTML=head+'<p class="empty">还没有写过祝福</p>';return}
       var tg={pending:'未 审 核',approved:'已 点 亮',rejected:'未 通 过'};
-      box.innerHTML=list.map(function(w){return ''+
+      box.innerHTML=head+list.map(function(w){return ''+
         '<div class="item" data-id="'+w.id+'">'+
           '<div class="top"><span class="nm">✦ 第 '+w.id+' 颗 · '+esc(w.name||'无名')+'</span>'+
           '<span class="tag '+esc(w.status)+'">'+tg[w.status]+'</span></div>'+
@@ -322,31 +324,46 @@ body{background-image:
   }
 
   /* ── 审核 ── */
-  async function loadReview(){
+  var RV={page:1,items:[],total:0,pages:0,status:'pending',busy:false};
+  function drawReview(box){
+    var tg={pending:'未 审 核',approved:'已 点 亮',rejected:'未 通 过'};
+    var head='<div class="muted" style="margin-bottom:.65rem">共 '+RV.total+
+      ' 条 / 已加载 '+RV.items.length+' 条</div>';
+    var h=RV.items.map(function(w){return ''+
+      '<div class="item">'+
+        '<div class="top"><label class="pick"><input type="checkbox" data-pick="'+w.id+'"></label>'+
+        '<span class="tag '+esc(w.status)+'">'+tg[w.status]+'</span></div>'+
+        '<div class="top" style="margin-top:.4rem"><span class="nm">✦ 第 '+w.id+' 颗 · '+esc(w.name||'无名')+'</span>'+
+        '<span class="tm">'+fmt(w.created_at)+'</span></div>'+
+        (w.photo?'<img src="'+esc(w.photo)+'" alt="">':'')+
+        '<p class="tx">'+esc(plain(w.text))+'</p>'+
+        '<div class="acts">'+
+          '<button class="chip" data-one="approve" data-id="'+w.id+'">通 过</button>'+
+          '<button class="chip g" data-one="reject" data-id="'+w.id+'">拒 绝</button>'+
+          '<button class="chip g" data-one="delete" data-id="'+w.id+'">删 除</button>'+
+        '</div></div>'}).join('');
+    if(RV.items.length<RV.total)
+      h+='<div class="item" data-rmore="1" style="text-align:center"><p class="tx">加 载 更 多 ↓</p></div>';
+    box.innerHTML=head+(h||'<p class="empty">这里空空的</p>');
+    $$('[data-one]',box).forEach(function(b){b.onclick=window.__xzOnce(async function(){
+      if(b.dataset.one==='delete'&&!confirm('确定删除？'))return;
+      try{await api('POST','/admin/wishes/'+b.dataset.id,{action:b.dataset.one});
+        toast('已处理');loadReview()}catch(e){toast(e.message)}
+    })});
+    $$('[data-rmore]',box).forEach(function(b){b.onclick=function(){loadReview(false)}});
+  }
+  async function loadReview(reset){
     var box=$('#reviewList');$('#allPick').checked=false;
+    if(reset!==false){RV.page=1;RV.items=[];RV.status=st.status;RV.total=0;RV.pages=0}
+    if(RV.busy)return;RV.busy=true;
     try{
-      var r=await api('GET','/admin/wishes?status='+encodeURIComponent(st.status)),list=r.wishes||[];
-      if(!list.length){box.innerHTML='<p class="empty">这里空空的</p>';return}
-      var tg={pending:'未 审 核',approved:'已 点 亮',rejected:'未 通 过'};
-      box.innerHTML=list.map(function(w){return ''+
-        '<div class="item">'+
-          '<div class="top"><label class="pick"><input type="checkbox" data-pick="'+w.id+'"></label>'+
-          '<span class="tag '+esc(w.status)+'">'+tg[w.status]+'</span></div>'+
-          '<div class="top" style="margin-top:.4rem"><span class="nm">'+esc(w.name||'无名')+'</span>'+
-          '<span class="tm">'+fmt(w.created_at)+'</span></div>'+
-          (w.photo?'<img src="'+esc(w.photo)+'" alt="">':'')+
-          '<p class="tx">'+esc(plain(w.text))+'</p>'+
-          '<div class="acts">'+
-            '<button class="chip" data-one="approve" data-id="'+w.id+'">通 过</button>'+
-            '<button class="chip g" data-one="reject" data-id="'+w.id+'">拒 绝</button>'+
-            '<button class="chip g" data-one="delete" data-id="'+w.id+'">删 除</button>'+
-          '</div></div>'}).join('');
-      $$('[data-one]',box).forEach(function(b){b.onclick=window.__xzOnce(async function(){
-        if(b.dataset.one==='delete'&&!confirm('确定删除？'))return;
-        try{await api('POST','/admin/wishes/'+b.dataset.id,{action:b.dataset.one});
-          toast('已处理');loadReview()}catch(e){toast(e.message)}
-      })});
-    }catch(e){box.innerHTML='<p class="empty">'+esc(e.message)+'</p>'}
+      var r=await api('GET','/admin/wishes?status='+encodeURIComponent(RV.status)+
+        '&page='+RV.page+'&size=24');
+      RV.busy=false;RV.total=r.total||0;RV.pages=r.pages||0;
+      RV.items=RV.items.concat(r.wishes||[]);
+      RV.page++;                       /* 下一页页码 */
+      drawReview(box);
+    }catch(e){RV.busy=false;box.innerHTML='<p class="empty">'+esc(e.message)+'</p>'}
   }
   function picked(){return $$('#reviewList [data-pick]:checked').map(function(c){return c.dataset.pick})}
   var batch=window.__xzOnce(async function(act){
@@ -420,7 +437,7 @@ body{background-image:
   $$('[data-st]').forEach(function(b){b.onclick=function(){
     st.status=b.dataset.st;
     $$('[data-st]').forEach(function(x){x.classList.toggle('g',x!==b)});
-    loadReview();
+    loadReview(true);
   }});
   $('#allPick').onchange=function(e){$$('#reviewList [data-pick]').forEach(function(c){c.checked=e.target.checked})};
   window.__xzBind($('#bApprove'),'onclick',function(){batch('approve')});
