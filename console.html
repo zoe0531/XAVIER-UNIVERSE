@@ -114,6 +114,14 @@ body{background-image:
   transform:rotate(-22deg);box-shadow:0 0 10px rgba(255,217,160,.28);pointer-events:none}
 @keyframes xzSpin{to{filter:hue-rotate(18deg)}}
 @keyframes xzFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-5px)}}
+/* ── 编辑祝福弹窗：沿用卡片紫金样式，不引外部依赖 ── */
+.xz-mask{position:fixed;inset:0;z-index:30;display:flex;align-items:center;justify-content:center;
+  padding:1rem;background:rgba(8,4,30,.72);backdrop-filter:blur(6px)}
+.xz-mask[hidden]{display:none!important}
+.xz-mask .card{width:100%;max-width:520px;max-height:88vh;overflow:auto;margin:0}
+.xz-mask .card h2{margin-bottom:.5rem}
+.xz-prev{display:block;width:100%;max-height:180px;object-fit:cover;border-radius:10px;margin-top:.6rem}
+.xz-mask .row .btn{flex:1;min-width:110px}
 </style>
 </head>
 <body>
@@ -200,6 +208,26 @@ body{background-image:
         <div class="row"><button class="btn" id="noticeSend">发 送 通 知</button></div>
       </div>
     </div>
+  </div>
+</div>
+<div class="xz-mask" id="editMask" hidden>
+  <div class="card">
+    <h2>编 辑 祝 福</h2>
+    <p class="muted" id="editNo"></p>
+    <label class="f">祝 福 语<textarea id="editText" rows="5" maxlength="2000"></textarea></label>
+    <label class="f">署 名<input id="editName" type="text" maxlength="12"></label>
+    <div class="row">
+      <button class="btn ghost" id="editPick" style="flex:0 0 auto">选 图</button>
+      <button class="chip g" id="editDrop" style="flex:0 0 auto">移 除 图</button>
+      <span class="muted" id="editPhotoName" style="flex:1"></span>
+    </div>
+    <input type="file" id="editFile" accept="image/*" hidden>
+    <img class="xz-prev" id="editPreview" alt="" hidden>
+    <div class="row">
+      <button class="btn" id="editSave">保 存 重 审</button>
+      <button class="btn ghost" id="editCancel">取 消</button>
+    </div>
+    <div class="err" id="editErr"></div>
   </div>
 </div>
 <div class="toast" id="toast" hidden></div>
@@ -315,13 +343,77 @@ body{background-image:
       })});
     }catch(e){box.innerHTML='<p class="empty">'+esc(e.message)+'</p>'}
   }
-  async function editWish(id,list){
-    var w=list.find(function(x){return String(x.id)===String(id)});if(!w)return;
-    var text=prompt('改一下祝福语：',plain(w.text));if(text===null)return;
-    var name=prompt('署名：',w.name||'');if(name===null)return;
-    try{await api('POST','/mine',{id:id,text:text,name:name,photo:w.photo||''});
-      toast('已修改，重新等待审核');loadMine()}catch(e){toast(e.message)}
+  /* ── 编辑祝福：文字 + 署名 + 图片，改完重新回待审 ──
+     未审 / 未通过都能改；已通过只允许删除（按钮不渲染，后端也拒）。 */
+  var EDIT={id:null,photo:'',thumb:'',busy:false};
+  function editPreview(){
+    var p=$('#editPreview'),n=$('#editPhotoName');
+    if(EDIT.photo){p.src=EDIT.photo;p.hidden=false;n.textContent='已 选 图'}
+    else{p.hidden=true;p.removeAttribute('src');n.textContent=''}
   }
+  function editWish(id,list){
+    var w=list.find(function(x){return String(x.id)===String(id)});if(!w)return;
+    if(w.status==='approved')return;
+    EDIT.id=id;EDIT.photo=w.photo||'';EDIT.thumb='';EDIT.busy=false;
+    $('#editNo').textContent='✦ 第 '+w.id+' 颗';
+    $('#editText').value=plain(w.text);
+    $('#editName').value=w.name||'';
+    $('#editErr').textContent='';
+    $('#editSave').disabled=false;$('#editSave').textContent='保 存 重 审';
+    editPreview();$('#editMask').hidden=false;
+  }
+  function closeEdit(){$('#editMask').hidden=true;EDIT.id=null}
+  /* 压主图 + 生成缩略图，与投稿端同一套上限；回 {photo,thumb} */
+  function compactWish(file,cb){
+    if(!file)return;
+    if(file.size>8*1024*1024){toast('图 片 太 大');return}
+    var fr=new FileReader();
+    fr.onload=function(){
+      var im=new Image();
+      im.onload=function(){
+        function draw(mx,q){
+          var k=Math.min(1,mx/Math.max(im.width,im.height));
+          var c=document.createElement('canvas');
+          c.width=Math.max(1,Math.round(im.width*k));
+          c.height=Math.max(1,Math.round(im.height*k));
+          c.getContext('2d').drawImage(im,0,0,c.width,c.height);
+          return c.toDataURL('image/jpeg',q);
+        }
+        var big=draw(1600,.78);
+        if(big.length>2800000)big=draw(1280,.68);
+        cb({photo:big,thumb:draw(320,.7)});
+      };
+      im.onerror=function(){toast('图 片 读 不 了')};
+      im.src=fr.result;
+    };
+    fr.onerror=function(){toast('图 片 读 不 了')};
+    fr.readAsDataURL(file);
+  }
+  window.__xzBind($('#editPick'),'onclick',function(){$('#editFile').click()});
+  $('#editFile').onchange=function(e){
+    var f=e.target.files&&e.target.files[0];e.target.value='';
+    if(!f)return;
+    compactWish(f,function(d){EDIT.photo=d.photo;EDIT.thumb=d.thumb;editPreview()});
+  };
+  window.__xzBind($('#editDrop'),'onclick',function(){EDIT.photo='';EDIT.thumb='';editPreview()});
+  window.__xzBind($('#editCancel'),'onclick',closeEdit);
+  window.__xzBind($('#editMask'),'onclick',function(e){if(e.target===$('#editMask'))closeEdit()});
+  /* 保存：点下即锁，等真实回执才解锁；失败给原话可重试，不假成功 */
+  var saveEdit=window.__xzOnce(async function(){
+    if(EDIT.busy||EDIT.id==null)return;
+    var text=$('#editText').value,name=$('#editName').value.trim(),err=$('#editErr');
+    err.textContent='';
+    if(!text.trim()){err.textContent='先 写 点 什 么';return}
+    EDIT.busy=true;
+    var btn=$('#editSave');btn.disabled=true;btn.textContent='· · ·';
+    try{
+      await api('POST','/mine',{id:EDIT.id,text:text,name:name||'无名',
+        photo:EDIT.photo,thumb:EDIT.thumb});
+      closeEdit();toast('已 修 改 · 重 新 等 待 审 核');loadMine();
+    }catch(e){err.textContent=e.message}
+    finally{EDIT.busy=false;btn.disabled=false;btn.textContent='保 存 重 审'}
+  });
+  window.__xzBind($('#editSave'),'onclick',saveEdit);
 
   /* ── 审核 ── */
   var RV={page:1,items:[],total:0,pages:0,status:'pending',busy:false};
