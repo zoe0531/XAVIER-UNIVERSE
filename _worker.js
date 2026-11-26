@@ -5,7 +5,8 @@
  * 关键设计：/api/wishes 完全兼容原站 STORE 用的 PostgREST 形状
  *   GET  ?select=...&order=id.asc&limit=1000&offset=0 → [{id,text,name,photo,created_at}]
  *   GET  ?select=id&order=id.desc&limit=1            → [{id}]   （原站 peek 探针）
- *   POST {text,name,photo}                            → [行]     （representation）
+ *   POST {text,name,photo,request_id}                 → [行]     （representation + total）
+ *        request_id 由每次点击生成，DB 层 UNIQUE 幂等：同票到达 N 次只落 1 行。
  *   DELETE ?id=eq.123                                → 200
  * 所以主页 index.html 只改了 4 行配置，银河渲染一个字节没动。
  *
@@ -106,7 +107,12 @@ async function ensureSchema(env) {
   try { await env.DB.prepare('CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)').run(); } catch (e) {}
   try { await env.DB.prepare('ALTER TABLE users ADD COLUMN muted INTEGER NOT NULL DEFAULT 0').run(); } catch (e) {}
   try { await env.DB.prepare('ALTER TABLE announcements ADD COLUMN photo TEXT').run(); } catch (e) {}
-  try { await env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_wishes_dedup ON wishes(owner_token, created_at DESC)').run(); } catch (e) {}
+  /* 幂等键：request_id 全局唯一。SQLite 唯一索引允许多个 NULL，老行不冲突。
+     用普通 UNIQUE INDEX（不用 partial），ON CONFLICT(request_id) 才能匹配到约束。 */
+  try { await env.DB.prepare('ALTER TABLE wishes ADD COLUMN request_id TEXT').run(); } catch (e) {}
+  try { await env.DB.prepare('CREATE UNIQUE INDEX IF NOT EXISTS uq_wishes_request_id ON wishes(request_id)').run(); } catch (e) {}
+  /* 图片压缩后单独存这张表，wishes 行里只留 /api/img/<id> 链接，不塞 base64 */
+  try { await env.DB.prepare('CREATE TABLE IF NOT EXISTS wish_images (id INTEGER PRIMARY KEY AUTOINCREMENT, mime TEXT, data TEXT, created_at INTEGER)').run(); } catch (e) {}
   _schemaReady = true;
 }
 
@@ -154,9 +160,35 @@ function stripMark(t) {
   return m ? m[2] : v.replace(/\u2060/g, '');
 }
 const plain = (t) => stripMark(t).slice(0, 240);
-/* 去重用完整纯正文，不截断，避免两条长祝福前 240 字相同被误吞；前缀不同也能认出是同一条 */
-const dedupText = (t) => stripMark(t);
 const when = () => new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
+/* 作者当前总条数（登录按 user_id，游客按设备 token），用于成功回执 */
+async function myTotal(env, s) {
+  try {
+    const r = s.user_id
+      ? await env.DB.prepare('SELECT COUNT(*) AS n FROM wishes WHERE user_id=?').bind(s.user_id).first()
+      : await env.DB.prepare('SELECT COUNT(*) AS n FROM wishes WHERE owner_token=? AND user_id IS NULL').bind(s.token).first();
+    return r ? Number(r.n) || 0 : 0;
+  } catch (e) { return 0; }
+}
+
+/* 图片压缩后单独存表；wishes 行里只留 /api/img/<id> 链接，绝不塞 base64 */
+async function storePhoto(env, raw, now) {
+  const v = String(raw || '').slice(0, 6000000);
+  const dm = /^data:(image\/[A-Za-z0-9.+-]+);base64,([\s\S]*)$/i.exec(v);
+  if (dm) {
+    const ir = await env.DB.prepare(
+      'INSERT INTO wish_images (mime,data,created_at) VALUES (?,?,?)'
+    ).bind(dm[1], dm[2], now).run();
+    const id = ir.meta && ir.meta.last_row_id != null ? ir.meta.last_row_id : null;
+    return { photo: id != null ? '/api/img/' + id : '', imgId: id };
+  }
+  if (/^\/api\/img\/\d+$/.test(v)) return { photo: v, imgId: null };
+  return { photo: '', imgId: null };
+}
+async function dropPhoto(env, photo) {
+  const m = /^\/api\/img\/(\d+)$/.exec(String(photo || ''));
+  if (m) { try { await env.DB.prepare('DELETE FROM wish_images WHERE id=?').bind(m[1]).run(); } catch (e) {} }
+}
 
 /* ── 行 → 原站格式 ── */
 function row(r) {
@@ -176,6 +208,20 @@ export async function handleApi(request, env) {
   await ensureSchema(env);
 
   try {
+    /* ===== 单独存的图片：wishes 行只留这个链接 ===== */
+    if (parts[0] === 'img' && parts[1] && m === 'GET') {
+      const r = await env.DB.prepare('SELECT mime,data FROM wish_images WHERE id=?').bind(parts[1]).first();
+      if (!r) return new Response('', { status: 404 });
+      let bin;
+      try { bin = Uint8Array.from(atob(String(r.data || '')), (c) => c.charCodeAt(0)); }
+      catch (e) { return new Response('', { status: 404 }); }
+      return new Response(bin, { headers: {
+        'Content-Type': String(r.mime || 'image/jpeg'),
+        'Cache-Control': 'public, max-age=31536000, immutable',
+        'X-Content-Type-Options': 'nosniff'
+      }});
+    }
+
     /* ===== 原站 STORE 专用：/api/wishes ===== */
     if (path === '/wishes' && m === 'GET') {
       // peek 探针：只看最新一条已通过的 id
@@ -202,63 +248,72 @@ export async function handleApi(request, env) {
           if (mu && Number(mu.muted) === 1) return fail('该账号已被禁言');
         } catch (e) {}
       }
+      /* 幂等键：一次点击一张票。缺票一律拒绝，绝不按内容/图片/作者/时间窗去重。 */
+      const rid = String(b.request_id || '').slice(0, 80);
+      if (!/^[A-Za-z0-9_-]{8,80}$/.test(rid)) return fail('缺少 request_id');
       const text = String(b.text || '');
       if (!stripMark(text).trim()) return fail('先写点什么吧');
       const name = String(b.name || '').slice(0, 40) || '无名';
-      const photo = String(b.photo || '').slice(0, 6000000);
+      const rawPhoto = String(b.photo || '').slice(0, 6000000);
       const now = Date.now();
-      /* 防重复：同一设备 30 秒内、内容/署名/图完全一样的，只认第一条。
-         连点、断网补传、多人重试都不会在星宙或审核里生出第二颗。 */
-      const recent = await env.DB.prepare(
-        'SELECT id,text,name,photo,created_at FROM wishes WHERE owner_token=? AND created_at>? ORDER BY id DESC LIMIT 20'
-      ).bind(s.token, now - 30000).all();
-      const same = (recent.results || []).find((x) =>
-        dedupText(x.text) === dedupText(text) && String(x.name || '') === name && String(x.photo || '') === photo);
-      if (same) return withCookie(json([row(same)], 200, { 'Cache-Control': 'no-store' }), cookie);
-      /* ── 编号规则 ──
-         只按「全表已有的最大编号 + 1」发号：
-         · 删掉中间一颗 → 其余编号纹丝不动，被删的号永久空着（不补位）
-         · 所有祝福（含待审 / 未通过）全清空 → 最大号没了，下一颗重新从第 1 颗开始
-         · 多人同时写撞了主键就重读最大号再试，绝不丢星、绝不复制出第二颗 */
-      const mx = await env.DB.prepare('SELECT MAX(id) AS m FROM wishes').bind().first();
-      let no = (mx && Number(mx.m) > 0) ? Number(mx.m) + 1 : 1;
-      let ins = null, lastErr = null;
-      for (let attempt = 0; attempt < 4; attempt++) {
-        try {
-          ins = await env.DB.prepare(
-            'INSERT INTO wishes (id,owner_token,user_id,text,name,photo,status,created_at) VALUES (?,?,?,?,?,?,?,?)'
-          ).bind(no, s.token, s.user_id, text, name, photo, 'pending', now).run();
-          break;
-        } catch (e) {
-          lastErr = e;
-          const mx2 = await env.DB.prepare('SELECT MAX(id) AS m FROM wishes').bind().first();
-          no = (mx2 && Number(mx2.m) > 0) ? Number(mx2.m) + 1 : 1;
-        }
+
+      /* 同票已落库：直接把已存在那行当成功返回，不报错、不新增、不重复存图 */
+      const hit = await env.DB.prepare(
+        'SELECT id,text,name,photo,created_at FROM wishes WHERE request_id=?'
+      ).bind(rid).first();
+      if (hit) {
+        const total = await myTotal(env, s);
+        return withCookie(json([Object.assign(row(hit), { total })], 200, { 'Cache-Control': 'no-store' }), cookie);
       }
-      if (!ins) throw lastErr || new Error('写入失败');
-      let created = await env.DB.prepare(
-        'SELECT id,text,name,photo,created_at FROM wishes WHERE id=?'
-      ).bind(no).first();
-      if (!created) created = await env.DB.prepare(
-        'SELECT id,text,name,photo,created_at FROM wishes WHERE owner_token=? AND created_at=? ORDER BY id DESC LIMIT 1'
-      ).bind(s.token, now).first() || { id: no, text, name, photo, created_at: now };
-      // 通知：有人投稿，等审核
-      await safeNotify(env, '收到一条新祝福，待审核',
-        [`署名：${name}`, `内容：${plain(text)}`, `时间：${when()}`]);
-      // 返回 representation：原站会立刻把这颗星画给自己；别人要等审核通过才看得到
-      return withCookie(json([row(created)], 200, { 'Cache-Control': 'no-store' }), cookie);
+
+      /* 图片压缩后单独存表，wishes.photo 只留链接 */
+      const sp = await storePhoto(env, rawPhoto, now);
+      const photo = sp.photo, imgId = sp.imgId;
+
+      /* 编号：全表最大 +1；删中间不补位；全清空归 1。
+         并发撞主键或撞 request_id 都收敛到「已存在那行」，绝不生成第二颗。 */
+      let no = 0, created = null, lastErr = null;
+      for (let attempt = 0; attempt < 5; attempt++) {
+        try {
+          const mx = await env.DB.prepare('SELECT MAX(id) AS m FROM wishes').bind().first();
+          no = (mx && Number(mx.m) > 0) ? Number(mx.m) + 1 : 1;
+          await env.DB.prepare(
+            'INSERT INTO wishes (id,request_id,owner_token,user_id,text,name,photo,status,created_at) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(request_id) DO NOTHING'
+          ).bind(no, rid, s.token, s.user_id, text, name, photo, 'pending', now).run();
+        } catch (e) { lastErr = e; }
+        created = await env.DB.prepare(
+          'SELECT id,text,name,photo,created_at FROM wishes WHERE request_id=?'
+        ).bind(rid).first();
+        if (created) break;                    /* 无论本次插入还是并发里别人先插的，都拿到同一行 */
+      }
+      if (!created) {
+        if (imgId != null) { try { await env.DB.prepare('DELETE FROM wish_images WHERE id=?').bind(imgId).run(); } catch (e) {} }
+        throw lastErr || new Error('写入失败');
+      }
+      /* 并发下若这张票是别人插的，我这次白存的那张图删掉 */
+      if (imgId != null && String(created.photo || '') !== photo) {
+        try { await env.DB.prepare('DELETE FROM wish_images WHERE id=?').bind(imgId).run(); } catch (e) {}
+      }
+      const total = await myTotal(env, s);
+      /* 只在确实新建（这行的 id 就是本次算的号）时才发投稿通知，重放不重发 */
+      if (Number(created.id) === no) {
+        await safeNotify(env, '收到一条新祝福，待审核',
+          [`署名：${name}`, `内容：${plain(text)}`, `时间：${when()}`]);
+      }
+      return withCookie(json([Object.assign(row(created), { total })], 200, { 'Cache-Control': 'no-store' }), cookie);
     }
 
     if (path === '/wishes' && m === 'DELETE') {
       const eq = q.get('id') || '';
       const id = String(eq).replace(/^eq\./, '');
       if (!/^\d+$/.test(id)) return fail('编号不对');
-      const w = await env.DB.prepare('SELECT id,owner_token,user_id FROM wishes WHERE id=?').bind(id).first();
+      const w = await env.DB.prepare('SELECT id,owner_token,user_id,photo FROM wishes WHERE id=?').bind(id).first();
       if (!w) return new Response('', { status: 200 });   // 原站按 r.ok 判断
       const s = await session(env, request);
       const adm = await isAdmin(env, request);
       const mine = s && (s.token === w.owner_token || (s.user_id && s.user_id === w.user_id));
       if (!adm && !mine) return fail('没有权限删除这颗星星', 403);
+      await dropPhoto(env, w.photo);
       await env.DB.prepare('DELETE FROM wishes WHERE id=?').bind(id).run();
       return new Response('', { status: 200 });
     }
@@ -394,13 +449,14 @@ export async function handleApi(request, env) {
       const r = u
         ? await env.DB.prepare(sel + 'WHERE user_id=? ORDER BY id DESC LIMIT 500').bind(u.id).all()
         : await env.DB.prepare(sel + 'WHERE owner_token=? AND user_id IS NULL ORDER BY id DESC LIMIT 500').bind(s.token).all();
-      return json({ wishes: (r.results || []).map((w) => Object.assign(row(w), { status: w.status })) }, 200, { 'Cache-Control': 'no-store' });
+      return json({ wishes: (r.results || []).map((w) => Object.assign(row(w), { status: w.status })),
+        total: await myTotal(env, s) }, 200, { 'Cache-Control': 'no-store' });
     }
     if (path === '/mine' && m === 'POST') {
       const s = await session(env, request);
       if (!s) return fail('请先登录或在本机投稿', 401);
       const b = await body(request), id = String(b.id || '');
-      const w = await env.DB.prepare('SELECT id,owner_token,user_id,status FROM wishes WHERE id=?').bind(id).first();
+      const w = await env.DB.prepare('SELECT id,owner_token,user_id,status,photo FROM wishes WHERE id=?').bind(id).first();
       if (!w) return fail('找不到这条祝福');
       const adm = await isAdmin(env, request);
       if (!adm && w.owner_token !== s.token && !(s.user_id && w.user_id === s.user_id))
@@ -408,12 +464,16 @@ export async function handleApi(request, env) {
       if (String(b.action || '') !== 'delete' && w.status === 'approved')
         return fail('已通过的祝福不能修改，只能删除');
       if (b.action === 'delete') {
+        await dropPhoto(env, w.photo);
         await env.DB.prepare('DELETE FROM wishes WHERE id=?').bind(id).run();
         return json({ ok: true });
       }
       const text = String(b.text || ''), name = String(b.name || '').slice(0, 40) || '无名';
+      /* 编辑路径同样只 UPDATE，图片单独存，wishes 行只留链接 */
+      const sp2 = await storePhoto(env, b.photo, Date.now());
+      if (sp2.photo !== String(w.photo || '')) await dropPhoto(env, w.photo);
       await env.DB.prepare('UPDATE wishes SET text=?,name=?,photo=?,status=? WHERE id=?')
-        .bind(text, name, String(b.photo || '').slice(0, 6000000), 'pending', id).run();
+        .bind(text, name, sp2.photo, 'pending', id).run();
       await safeNotify(env, '一条祝福被修改，需重新审核', [`署名：${name}`, `内容：${plain(text)}`, `时间：${when()}`]);
       return json({ ok: true });
     }
@@ -438,9 +498,10 @@ export async function handleApi(request, env) {
       if (!['approve', 'reject', 'delete'].includes(act)) return fail('操作不合法');
       const passed = [];
       for (const id of ids) {
-        const w = await env.DB.prepare('SELECT id,text,name,status FROM wishes WHERE id=?').bind(id).first();
+        const w = await env.DB.prepare('SELECT id,text,name,status,photo FROM wishes WHERE id=?').bind(id).first();
         if (!w) continue;
-        if (act === 'delete') { await env.DB.prepare('DELETE FROM wishes WHERE id=?').bind(id).run(); continue; }
+        /* 审核路径只 DELETE / UPDATE，绝无 INSERT，行数恒定 */
+        if (act === 'delete') { await dropPhoto(env, w.photo); await env.DB.prepare('DELETE FROM wishes WHERE id=?').bind(id).run(); continue; }
         const st = act === 'approve' ? 'approved' : 'rejected';
         await env.DB.prepare('UPDATE wishes SET status=? WHERE id=?').bind(st, id).run();
         if (act === 'approve' && w.status !== 'approved') passed.push(w);
@@ -452,9 +513,10 @@ export async function handleApi(request, env) {
     if (parts[0] === 'admin' && parts[1] === 'wishes' && parts[2] && m === 'POST') {
       if (!(await isAdmin(env, request))) return fail('未授权', 401);
       const b = await body(request), id = String(parts[2]);
-      const w = await env.DB.prepare('SELECT id,text,name,status FROM wishes WHERE id=?').bind(id).first();
+      const w = await env.DB.prepare('SELECT id,text,name,status,photo FROM wishes WHERE id=?').bind(id).first();
       if (!w) return fail('找不到这条祝福');
-      if (b.action === 'delete') await env.DB.prepare('DELETE FROM wishes WHERE id=?').bind(id).run();
+      /* 单条审核：同样只 DELETE / UPDATE，禁止 INSERT */
+      if (b.action === 'delete') { await dropPhoto(env, w.photo); await env.DB.prepare('DELETE FROM wishes WHERE id=?').bind(id).run(); }
       else if (b.action === 'approve' || b.action === 'reject') {
         await env.DB.prepare('UPDATE wishes SET status=? WHERE id=?').bind(b.action === 'approve' ? 'approved' : 'rejected', id).run();
         if (b.action === 'approve' && w.status !== 'approved')

@@ -206,6 +206,24 @@ body{background-image:
 
 <script>
 (function(){
+  /* 全局只绑一次 + 一次点击只放行一次（与主页同语义） */
+  window.__xzBind=function(el,type,fn){
+    if(!el)return;var k='xzBound_'+type;
+    if(el.dataset&&el.dataset[k])return;
+    if(el.dataset)el.dataset[k]='1';
+    if(type==='onclick')el.onclick=fn;else el.addEventListener(type,fn);
+  };
+  window.__xzOnce=function(fn){
+    var busy=false;
+    return function(){
+      if(busy)return;
+      busy=true;
+      var done=function(){busy=false},r;
+      try{r=fn.apply(this,arguments)}catch(e){done();throw e}
+      if(r&&typeof r.then==='function')r.then(done,done);else done();
+      return r;
+    };
+  };
   var $ = function(s,r){return (r||document).querySelector(s)};
   var $$ = function(s,r){return Array.from((r||document).querySelectorAll(s))};
   var esc = function(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){
@@ -287,12 +305,12 @@ body{background-image:
           '<div class="acts">'+(w.status==='approved'?'':'<button class="chip" data-edit="'+w.id+'">编 辑</button>')+
           '<button class="chip g" data-del="'+w.id+'">删 除</button></div>'+
         '</div>'}).join('');
-      $$('[data-edit]',box).forEach(function(b){b.onclick=function(){editWish(b.dataset.edit,list)}});
-      $$('[data-del]',box).forEach(function(b){b.onclick=async function(){
+      $$('[data-edit]',box).forEach(function(b){b.onclick=window.__xzOnce(function(){editWish(b.dataset.edit,list)})});
+      $$('[data-del]',box).forEach(function(b){b.onclick=window.__xzOnce(async function(){
         if(!confirm('确定删除这条祝福？'))return;
         try{await api('POST','/mine',{id:b.dataset.del,action:'delete'});toast('已删除');loadMine()}
         catch(e){toast(e.message)}
-      }});
+      })});
     }catch(e){box.innerHTML='<p class="empty">'+esc(e.message)+'</p>'}
   }
   async function editWish(id,list){
@@ -323,21 +341,21 @@ body{background-image:
             '<button class="chip g" data-one="reject" data-id="'+w.id+'">拒 绝</button>'+
             '<button class="chip g" data-one="delete" data-id="'+w.id+'">删 除</button>'+
           '</div></div>'}).join('');
-      $$('[data-one]',box).forEach(function(b){b.onclick=async function(){
+      $$('[data-one]',box).forEach(function(b){b.onclick=window.__xzOnce(async function(){
         if(b.dataset.one==='delete'&&!confirm('确定删除？'))return;
         try{await api('POST','/admin/wishes/'+b.dataset.id,{action:b.dataset.one});
           toast('已处理');loadReview()}catch(e){toast(e.message)}
-      }});
+      })});
     }catch(e){box.innerHTML='<p class="empty">'+esc(e.message)+'</p>'}
   }
   function picked(){return $$('#reviewList [data-pick]:checked').map(function(c){return c.dataset.pick})}
-  async function batch(act){
+  var batch=window.__xzOnce(async function(act){
     var ids=picked();if(!ids.length){toast('先勾选几条');return}
     if(act==='delete'&&!confirm('确定删除选中的 '+ids.length+' 条？'))return;
     try{await api('POST','/admin/wishes/batch',{ids:ids,action:act});
       toast('已处理');loadReview()}
     catch(e){toast(e.message)}
-  }
+  });
 
   /* ── 管理员：只显示管理员名字，不显示账户码，不列普通成员 / 未登录访客 ── */
   async function loadUsers(){
@@ -362,11 +380,11 @@ body{background-image:
         '<p class="tx">'+esc(n.text)+'</p>'+
         (st.admin?'<div class="acts"><button class="chip g" data-ndel="'+n.id+'">撤 除</button></div>':'')+
         '</div>'}).join('');
-      $$('[data-ndel]',box).forEach(function(b){b.onclick=async function(){
+      $$('[data-ndel]',box).forEach(function(b){b.onclick=window.__xzOnce(async function(){
         if(!confirm('撤除这条通知？'))return;
         try{await api('POST','/admin/announce/'+b.dataset.ndel,{action:'delete'});
           toast('已撤除');loadNotice()}catch(e){toast(e.message)}
-      }});
+      })});
     }catch(e){box.innerHTML='<p class="empty">'+esc(e.message)+'</p>'}
   }
   var noticePhoto='';
@@ -384,18 +402,18 @@ body{background-image:
     };
     fr.readAsDataURL(file);
   }
-  $('#noticePhoto').onclick=function(){$('#noticeFile').click()};
+  window.__xzBind($('#noticePhoto'),'onclick',function(){$('#noticeFile').click()});
   $('#noticeFile').onchange=function(e){
     var f=e.target.files&&e.target.files[0];if(!f)return;
     compact(f,function(d){noticePhoto=d;$('#noticePhotoName').textContent='已选图'});
     e.target.value='';
   };
-  async function sendNotice(){
+  var sendNotice=window.__xzOnce(async function(){
     var t=$('#noticeText').value.trim();if(!t&&!noticePhoto){toast('填入通知');return}
     try{await api('POST','/admin/announce',{text:t,photo:noticePhoto});
       $('#noticeText').value='';noticePhoto='';$('#noticePhotoName').textContent='';
       loadNotice();toast('已发给全部用户')}catch(e){toast(e.message)}
-  }
+  });
 
   /* ── 绑定 ── */
   $$('[data-tab]').forEach(function(b){b.onclick=function(){switchTab(b.dataset.tab)}});
@@ -405,10 +423,10 @@ body{background-image:
     loadReview();
   }});
   $('#allPick').onchange=function(e){$$('#reviewList [data-pick]').forEach(function(c){c.checked=e.target.checked})};
-  $('#bApprove').onclick=function(){batch('approve')};
-  $('#bReject').onclick=function(){batch('reject')};
-  $('#bDelete').onclick=function(){batch('delete')};
-  $('#noticeSend').onclick=sendNotice;
+  window.__xzBind($('#bApprove'),'onclick',function(){batch('approve')});
+  window.__xzBind($('#bReject'),'onclick',function(){batch('reject')});
+  window.__xzBind($('#bDelete'),'onclick',function(){batch('delete')});
+  window.__xzBind($('#noticeSend'),'onclick',sendNotice);
   $('#authSwitch').onclick=function(){st.mode=st.mode==='login'?'register':'login';renderAuth()};
   $('#authOk').onclick=doAuth;
   $('#password').onkeydown=function(e){if(e.key==='Enter')doAuth()};

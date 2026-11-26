@@ -511,6 +511,26 @@ var CONFIG={
   apiBase:'/api/wishes'   /* 数据交给本站服务端，密钥不再放前端 */
 };
 var loadFailed=false,retryTimer=null,retryCount=0,lastKnownN=0,emptyStreak=0;
+/* 每个元素每种事件全局只绑一次：dataset 打标，后到的绑定直接跳过 */
+window.__xzBind=function(el,type,fn){
+ if(!el)return;
+ var k='xzBound_'+type;
+ if(el.dataset&&el.dataset[k])return;
+ if(el.dataset)el.dataset[k]='1';
+ if(type==='onclick')el.onclick=fn;else el.addEventListener(type,fn);
+};
+/* 一次点击只放行一次：锁到 Promise 结束，快速双击 / 双绑都不会发出第二个请求 */
+window.__xzOnce=function(fn){
+ var busy=false;
+ return function(){
+  if(busy)return;
+  busy=true;
+  var done=function(){busy=false},r;
+  try{r=fn.apply(this,arguments)}catch(e){done();throw e}
+  if(r&&typeof r.then==='function')r.then(done,done);else done();
+  return r;
+ };
+};
 /* 预览窗 / 断网 / 跨域被拦：请求既不成功也不失败时，2.5 秒后一律转「本机可用」，
    绝不把按钮卡在「···」，也绝不剩一张空背景。云端一通，自动并回共享星海。 */
 function withTimeout(p,ms){return new Promise(function(res,rej){
@@ -539,17 +559,19 @@ function cacheSet(list){
    var z={},k;for(k in w)z[k]=k==='img'?'':w[k];return z}).slice(-200)))}catch(e2){}
  }
 }
-function localKept(){
- var a=[],i;for(i=0;i<wishes.length;i++)if(/^local_/.test(String(wishes[i].dk)))a.push(wishes[i]);
- return a;
-}
+function localKept(){ return []; }   /* 本机假星已废弃，保留空函数只为兼容旧引用 */
 /* WebGL 一旦不可用，自动切 2D 星海：照样转、照样点、照样发、照样查 */
 var glOK=false,fbCv=null,fbCtx=null,fbPts=[],fbStars=[],fbAng=0;
-/* 写祝福本地兜底：云端一时写不进去也绝不丢，联网自动补 */
-var pending=[],flushing=false;
-try{pending=JSON.parse(localStorage.getItem('xz_pending')||'[]')}catch(e){pending=[]}
-if(!Array.isArray(pending))pending=[];
-function savePending(){try{localStorage.setItem('xz_pending',JSON.stringify(pending))}catch(e){}}
+/* 旧版「失败存本地、联网批量补发」是突然多出几条的根源，整条链路已删除。
+   启动时顺手清掉历史队列和缓存里的本机假星，永不重放。 */
+try{
+  localStorage.removeItem('xz_pending');
+  var _cz=JSON.parse(localStorage.getItem(CACHEKEY)||'[]');
+  if(Array.isArray(_cz)){
+    var _f=_cz.filter(function(w){return w&&!/^local_/.test(String(w.dk))});
+    if(_f.length!==_cz.length)localStorage.setItem(CACHEKEY,JSON.stringify(_f));
+  }
+}catch(e){}
 try{lastKnownN=parseInt(localStorage.getItem('xz_last_n')||'0',10)||0}catch(e){}
 
 /* ---------- 永久编号 + 「我写的」归属 ----------
@@ -667,19 +689,20 @@ var STORE={
     return page().then(function(rows){loadFailed=false;return fromRows(rows)})
                  .catch(function(){
                    loadFailed=true;
-                   return cacheGet().concat(localKept());   /* 云端读不到：本地星海照样在 */
+                   return cacheGet();   /* 云端读不到：只显示已落库缓存，绝不并入本机假星 */
                  });
   },
-  add:function(w){
-    var no=nextNo();
+  add:function(w,rid){
+    /* 一次点击一张票：rid 只由 send() 生成，重试复用同一张，服务端 UNIQUE 幂等。
+       不再往正文塞零宽编号前缀（编号一律由服务端 id 决定） */
     return withTimeout(fetch(this.base,{method:'POST',
       headers:sbH({'Content-Type':'application/json','Prefer':'return=representation'}),
-      body:JSON.stringify({text:NMARK+no.toString(36)+NMARK+(isOwner()?'o':'x')+NMARK+w.text,
-        name:w.by,photo:w.img||null})}),2500)
+      body:JSON.stringify({text:w.text,name:w.by,photo:w.img||null,request_id:rid})}),8000)
       .then(function(r){if(!r.ok)throw new Error('add');return r.json()})
       .then(function(a){var r=Array.isArray(a)?a[0]:a;
         if(!r||r.id===undefined)throw new Error('add');
-        myIdsAdd(r.id);return fromRow(r);});
+        myIdsAdd(r.id);
+        var out=fromRow(r);out.total=(r.total==null?null:Number(r.total));return out;});
   },
   remove:function(dk){
     if(/^local_/.test(String(dk)))return Promise.resolve(true);   /* 本机星直接删 */
@@ -1139,18 +1162,9 @@ setInterval(function(){
  }else if(fbCtx){tick2D(now)}
 },140);
 function commitList(list){
- if(loadFailed){
-  /* 本机模式：不再「一颗都不动」。缓存的星海 + 刚写的本地星，照样转、点、搜、删 */
-  var merged=[],seen={},i;
-  for(i=0;i<list.length;i++)if(!seen[list[i].dk]){seen[list[i].dk]=1;merged.push(list[i])}
-  var keep=localKept();for(i=0;i<keep.length;i++)if(!seen[keep[i].dk])merged.push(keep[i]);
-  wishes=normalizeNos(merged.slice(-CONFIG.capacity));
-  lastSig=sigOf(wishes);pickBatch();updateCount();return;
- }
- /* 云端确认为 0 行：本机旧账、缓存、待传草稿、我的列表一并作废。
-    任何设备重开都统一显示 0 颗，且不会再把旧草稿补回云端。 */
+ /* 断网 / 云端 0 行：只显示已落库缓存，绝不再并入本机假星、绝不重放旧队列 */
+ /* 云端确认为 0 行：本机旧账、缓存、我的列表一并作废。 */
  if(!list.length){
-  pending=[];savePending();
   try{localStorage.removeItem('xz_last_n');localStorage.removeItem(MINEKEY);localStorage.removeItem(CACHEKEY)}catch(e){}
   lastKnownN=0;emptyStreak=0;retryCount=0;
   if(retryTimer){clearTimeout(retryTimer);retryTimer=null}
@@ -1463,54 +1477,58 @@ box.addEventListener('drop',function(e){
 });
 photoDel.onclick=function(){photoData='';showPhoto()};
 
-var sending=false,lastSentAt=0,SEND_GAP=3000;
+/* ── 提交：一次点击 = 一张 request_id = 恰好一条写入请求 ──
+   · 无内容/图片/作者/时间窗去重，无 3 秒限流：解锁后用户再点就是合法新的一条
+   · 点击立刻 disabled + loading，收到服务端成功回执才解锁
+   · 没收到回执期间不生成新票、不重复发；失败最多重试 1 次且复用同一张票
+   · 不存本地队列、不联网重放；图片压缩后随请求提交，表里只留链接 */
+var sending=false;
+function newTicket(){
+ try{ if(window.crypto&&crypto.randomUUID)return crypto.randomUUID(); }catch(e){}
+ return 't'+Date.now().toString(36)+Math.random().toString(36).slice(2,10);
+}
+function showMyTotal(n){
+ var el=document.getElementById('mineNum');
+ if(el)el.textContent='共 '+n+' 条';
+}
 function send(){
+ if(sending)return;                       /* 按钮也 disabled，双保险 */
+ var btn=document.getElementById('wSend');
+ if(!btn||btn.disabled)return;
  var txt=wText.value;
- if(!txt.trim()||sending)return;
- var wait=SEND_GAP-(Date.now()-lastSentAt);
- if(wait>0){toast('等 '+Math.ceil(wait/1000)+' 秒再放下一颗 ✦');return}
+ if(!txt.trim())return;
  if(wishes.length>=CONFIG.capacity)return;
  var by=wBy.value.trim()||'无名',img=photoData||'';
- var btn=document.getElementById('wSend'),old=btn.textContent;
- function done(t){
-  lastSentAt=Date.now();
+ var ticket=newTicket();                 /* 本次点击唯一的一张票，重试不再生成 */
+ var old=btn.textContent;
+ function lock(){sending=true;btn.disabled=true;btn.textContent='· · ·'}
+ function unlock(){sending=false;btn.disabled=false;btn.textContent=old}
+ function succeed(w){
+  unlock();
   wText.value='';wBy.value='';photoData='';showPhoto();saveDraft();resetSheet();
-  sending=false;btn.textContent=old;toast(t);
+  toast('已 提 交 · 审 核 通 过 后 才 会 亮 起 ✦');
+  if(w&&typeof w.total==='number')showMyTotal(w.total);
   try{renderMine()}catch(e){}
  }
- if(loadFailed){
-  pending.push({text:txt,by:by,img:img});savePending();
-  done('已 存 好 · 联 网 后 提 交 审 核 ✦');
-  return;
+ function giveUp(){
+  unlock();
+  toast('没 发 出 去 · 请 再 点 一 次 ✦');   /* 内容还在，用户重新点=新票=合法新增 */
  }
- sending=true;btn.textContent='· · ·';
- STORE.add({text:txt,by:by,img:img}).then(function(w){
-  /* 只记归属，绝不画星：审核通过后才会出现在星宙 */
-  done('已 提 交 · 审 核 通 过 后 才 会 亮 起 ✦');
- }).catch(function(){
-  pending.push({text:txt,by:by,img:img});savePending();
-  done('已 存 好 · 联 网 后 提 交 审 核 ✦');
-  setTimeout(flushPending,1500);
- });
+ lock();
+ function attempt(retried){
+  STORE.add({text:txt,by:by,img:img},ticket).then(succeed).catch(function(){
+   if(!retried){setTimeout(function(){attempt(true)},1200);return}  /* 同票最多重试 1 次 */
+   giveUp();
+  });
+ }
+ attempt(false);
 }
-/* 待同步队列：一条一条补传，成功就用云端真行替换，不重号、不重复 */
-function flushPending(){
- if(!pending.length||flushing||loadFailed)return;   /* 本机模式先攒着，通了再补 */
- flushing=true;var it=pending[0];
- STORE.add({text:it.text,by:it.by,img:it.img}).then(function(){
-  pending.shift();savePending();flushing=false;
-  if(running)hardReload();
-  if(pending.length)setTimeout(flushPending,1400);
- }).catch(function(){flushing=false});
-}
-setTimeout(flushPending,2600);
-setInterval(flushPending,9000);
-addEventListener('online',function(){setTimeout(flushPending,600)});
-document.getElementById('add').onclick=function(e){e.stopPropagation();closeSearch();closeMine();openSheet()};
-document.getElementById('reshuffle').onclick=function(e){e.stopPropagation();closeSearch();closeMine();closeCard();pickBatch()};
-document.getElementById('wSend').onclick=send;
-document.getElementById('wFold').onclick=foldSheet;
-document.getElementById('wClear').onclick=clearDraft;
+/* 旧 flushPending / setInterval / online 重放 / 本地队列：全部删除，绝不批量重放 */
+window.__xzBind(document.getElementById('add'),'onclick',function(e){e.stopPropagation();closeSearch();closeMine();openSheet()});
+window.__xzBind(document.getElementById('reshuffle'),'onclick',function(e){e.stopPropagation();closeSearch();closeMine();closeCard();pickBatch()});
+window.__xzBind(document.getElementById('wSend'),'onclick',send);
+window.__xzBind(document.getElementById('wFold'),'onclick',foldSheet);
+window.__xzBind(document.getElementById('wClear'),'onclick',clearDraft);
 sheet.addEventListener('pointerdown',function(e){if(e.target===sheet)foldSheet()});
 box.addEventListener('pointerdown',function(e){e.stopPropagation()});
 
@@ -1600,12 +1618,12 @@ var adminGate=document.getElementById('adminGate'),admin=document.getElementById
     adPw=document.getElementById('adPw'),adErr=document.getElementById('adErr'),delNo=document.getElementById('delNo');
 function closeAdmin(){adminGate.className='';admin.className='';adPw.value='';adErr.className='err';delNo.value='';
  document.getElementById('delPrev').textContent=''}
-document.getElementById('setting').onclick=function(e){
+window.__xzBind(document.getElementById('setting'),'onclick',function(e){
  e.stopPropagation();closeCard();foldSheet();closeSearch();closeMine();
  admin.className='';adminGate.className='on';setTimeout(function(){adPw.focus()},260);
-};
-document.getElementById('adCancel').onclick=closeAdmin;
-document.getElementById('adClose').onclick=closeAdmin;
+});
+window.__xzBind(document.getElementById('adCancel'),'onclick',closeAdmin);
+window.__xzBind(document.getElementById('adClose'),'onclick',closeAdmin);
 function enterAdmin(){
  if(adPw.value===CONFIG.adminPass){
   setOwner();                         /* 输过一次，这台以后写的都归进「我的」 */
@@ -1613,8 +1631,8 @@ function enterAdmin(){
   document.getElementById('delPrev').textContent='输入序号后，这里会先显示那一条，确认再删';
  }else{adErr.className='err on';adPw.value=''}
 }
-document.getElementById('adEnter').onclick=enterAdmin;
-adPw.addEventListener('keydown',function(e){if(e.key==='Enter')enterAdmin()});
+window.__xzBind(document.getElementById('adEnter'),'onclick',enterAdmin);
+window.__xzBind(adPw,'keydown',function(e){if(e.key==='Enter')enterAdmin()});
 delNo.addEventListener('input',function(){
  var n=parseInt(delNo.value,10),p=document.getElementById('delPrev'),idx=findByNo(n);
  if(idx>=0){
@@ -1622,7 +1640,7 @@ delNo.addEventListener('input',function(){
   p.textContent='第 '+w.no+' 颗｜'+(w.by||'无名')+'：'+s+(w.img?'　［含照片］':'');
  }else p.textContent=delNo.value?'没有这一颗':'';
 });
-document.getElementById('delBtn').onclick=function(){
+window.__xzBind(document.getElementById('delBtn'),'onclick',function(){
  var n=parseInt(delNo.value,10),idx=findByNo(n);
  if(idx<0){document.getElementById('delPrev').textContent='没有这一颗';return}
  var delDk=wishes[idx].dk;
@@ -1636,7 +1654,7 @@ document.getElementById('delBtn').onclick=function(){
   var tt=document.getElementById('toast');tt.className='';tt.textContent='';
   delNo.value='';document.getElementById('delPrev').textContent='已删除';
  });
-}
+});
 adminGate.addEventListener('pointerdown',function(e){e.stopPropagation()});
 admin.addEventListener('pointerdown',function(e){e.stopPropagation()});
 
@@ -1656,7 +1674,7 @@ function mineIdx(){
 function canDelete(w){return isOwner()||w.canDel===true}
 function renderMine(){
  var ix=mineIdx(),LIMIT=200,show=ix.slice(-LIMIT).reverse();   /* 最近的在前，最多 200 条，多了不卡 */
- document.getElementById('mineNum').textContent='共 写 了 '+ix.length+' 颗';
+ document.getElementById('mineNum').textContent='共 '+ix.length+' 条';
  if(!ix.length){mineList.innerHTML='<div class="none">还没有你的星星</div>';return}
  var html=show.map(function(i){
   var w=wishes[i],dt=new Date(w.t||Date.now());
@@ -1674,23 +1692,10 @@ function openMine(){
  minePanel.className='on';renderMine();
 }
 function closeMine(){minePanel.className=''}
-document.getElementById('mineBtn').onclick=function(e){e.stopPropagation();openMine()};
-document.getElementById('mineClose').onclick=function(e){e.stopPropagation();closeMine()};
-mineList.addEventListener('click',function(e){
- e.stopPropagation();
- var b=e.target.closest?e.target.closest('.del'):null;if(!b)return;
- var no=parseInt(b.getAttribute('data-no'),10),k=findByNo(no);if(k<0)return;
- if(!canDelete(wishes[k]))return;
- var delDk=wishes[k].dk;
- STORE.remove(delDk).then(function(ok){
-  if(!ok&&!loadFailed)return;
-  var j=findByNo(no);if(j>=0)wishes.splice(j,1);
-  lastKnownN=wishes.length;emptyStreak=2;
-  try{localStorage.setItem('xz_last_n',String(lastKnownN))}catch(e){}
-  lastSig=sigOf(wishes);
-  closeCard();pickBatch();renderMine();
- });
-});
+window.__xzBind(document.getElementById('mineBtn'),'onclick',function(e){e.stopPropagation();openMine()});
+window.__xzBind(document.getElementById('mineClose'),'onclick',function(e){e.stopPropagation();closeMine()});
+/* 「我 的」列表的删除统一交给 addon 唯一的委托监听（.xz-del），
+   这里不再挂第二个 click 监听，杜绝双绑各删一次 */
 minePanel.addEventListener('pointerdown',function(e){e.stopPropagation()});
 
 
@@ -2351,12 +2356,12 @@ body.immerse #xzBar,body.immerse #xzModal{display:none!important}
     bindPic('xzNotePic','xzNoteFile','xzNotePicName',pic);
     var go=$('#xzGoLogin');if(go)go.onclick=function(){location.href='./console.html'};
     $('#xzGoAdv').onclick=openAdvancedGate;
-    $('#xzSend').onclick=async function(){
+    $('#xzSend').onclick=window.__xzOnce(async function(){
       var t=$('#xzNote').value.trim();if(!t&&!pic.v){msg('填入通知');return}
       try{await api('POST','/admin/announce',{text:t,photo:pic.v});
         $('#xzNote').value='';pic.v='';$('#xzNotePicName').textContent='';
         msg('已发送','ok');toast('通知已发出')}catch(e){msg(e.message)}
-    };
+    });
     $('#xzGoConsole').onclick=function(){location.href='./console.html'};
     loadDeletable();
   }
@@ -2447,7 +2452,7 @@ body.immerse #xzBar,body.immerse #xzModal{display:none!important}
           '<p class="tx">'+esc(plain(w.text).slice(0,90))+'</p>'+
           '<div class="xz-row"><button class="xz-chip warn" data-del="'+w.id+'">删 除</button></div></div>';
       }).join('');
-      $$('[data-del]',box).forEach(function(b){b.onclick=async function(){
+      $$('[data-del]',box).forEach(function(b){b.onclick=window.__xzOnce(async function(){
         if(!confirm('确定删除这颗祝福星？'))return;
         try{
           if(XZ.admin)await api('POST','/admin/wishes/'+b.dataset.del,{action:'delete'});
@@ -2455,7 +2460,7 @@ body.immerse #xzBar,body.immerse #xzModal{display:none!important}
           toast('已删除');loadDeletable();
           try{hardReload()}catch(e){}
         }catch(e){msg(e.message)}
-      }});
+      })});
     }catch(e){box.innerHTML='<div class="xz-empty">'+esc(e.message)+'</div>'}
   }
 
@@ -2500,22 +2505,22 @@ body.immerse #xzBar,body.immerse #xzModal{display:none!important}
             '<button class="xz-chip warn" data-one="delete" data-id="'+w.id+'">删 除</button>'+
           '</div></div>';
       }).join('');
-      $$('[data-one]',box).forEach(function(b){b.onclick=async function(){
+      $$('[data-one]',box).forEach(function(b){b.onclick=window.__xzOnce(async function(){
         if(b.dataset.one==='delete'&&!confirm('确定删除？'))return;
         try{await api('POST','/admin/wishes/'+b.dataset.id,{action:b.dataset.one});
           toast('已处理');loadReviewList();try{hardReload()}catch(e){}}
         catch(e){msg(e.message)}
-      }});
+      })});
     }catch(e){box.innerHTML='<div class="xz-empty">'+esc(e.message)+'</div>'}
   }
   function picked(){return $$('#xzReviewList [data-pick]:checked').map(function(c){return c.dataset.pick})}
-  async function batch(act){
+  var batch=window.__xzOnce(async function(act){
     var ids=picked();if(!ids.length){msg('先勾选几条');return}
     if(act==='delete'&&!confirm('确定删除选中的 '+ids.length+' 条？'))return;
     try{await api('POST','/admin/wishes/batch',{ids:ids,action:act});
       toast('已批量处理');loadReviewList();try{hardReload()}catch(e){}}
     catch(e){msg(e.message)}
-  }
+  });
   function fmt(v){var d=new Date(v);return isNaN(d)?'':(d.getMonth()+1)+'/'+d.getDate()+' '+
     String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')}
 
@@ -2530,12 +2535,12 @@ body.immerse #xzBar,body.immerse #xzModal{display:none!important}
         '<div class="xz-row"><button class="xz-chip" id="xzSend2">发 送 通 知</button></div>':'');
     var pic={v:''};
     bindPic('xzNote2Pic','xzNote2File','xzNote2PicName',pic);
-    var s=$('#xzSend2');if(s)s.onclick=async function(){
+    var s=$('#xzSend2');if(s)s.onclick=window.__xzOnce(async function(){
       var t=$('#xzNote2').value.trim();if(!t&&!pic.v){msg('填入通知');return}
       try{await api('POST','/admin/announce',{text:t,photo:pic.v});
         $('#xzNote2').value='';pic.v='';$('#xzNote2PicName').textContent='';
         msg('已发送','ok');loadNoticeList()}catch(e){msg(e.message)}
-    };
+    });
     loadNoticeList();
   }
   async function loadNoticeList(){
@@ -2550,23 +2555,26 @@ body.immerse #xzBar,body.immerse #xzModal{display:none!important}
           (XZ.admin?'<div class="xz-row"><button class="xz-chip warn" data-ndel="'+n.id+'">撤 除</button></div>':'')+
           '</div>';
       }).join('');
-      $$('[data-ndel]',box).forEach(function(b){b.onclick=async function(){
+      $$('[data-ndel]',box).forEach(function(b){b.onclick=window.__xzOnce(async function(){
         if(!confirm('撤除这条通知？'))return;
         try{await api('POST','/admin/announce/'+b.dataset.ndel,{action:'delete'});
           toast('已撤除');loadNoticeList()}catch(e){msg(e.message)}
-      }});
+      })});
     }catch(e){box.innerHTML='<div class="xz-empty">'+esc(e.message)+'</div>'}
   }
 
   /* ── 接管 ⚙、我 的；其余符号 ── */
   /* ⚙：先过站长口令 → 再进设置。口令不出现在任何前端文件里 */
-  document.getElementById('setting').onclick=function(e){
+  /* 接管 ⚙：用 __xzBind 覆盖，绝不和主脚本叠成两个 click */
+  var _set=document.getElementById('setting');
+  if(_set)_set.dataset.xzBound_onclick='';
+  window.__xzBind(_set,'onclick',function(e){
     e.stopPropagation();closeOther();
     var gate=document.getElementById('adminGate'),pw=document.getElementById('adPw');
     gate.className='on';pw.value='';document.getElementById('adErr').className='err';
     setTimeout(function(){try{pw.focus()}catch(err){}},240);
     window.xzAfterGate=function(){gate.className='';open('setting','设 置')};
-  };
+  });
   var xzEnterAdmin=function(){
     var pw=document.getElementById('adPw'),err=document.getElementById('adErr');
     api('POST','/admin/owner-login',{password:pw.value}).then(function(){
@@ -2577,7 +2585,8 @@ body.immerse #xzBar,body.immerse #xzModal{display:none!important}
     }).catch(function(){err.className='err on';pw.value=''});
   };
   window.enterAdmin=xzEnterAdmin;                        /* 回车键那条监听会解析到这里 */
-  document.getElementById('adEnter').onclick=xzEnterAdmin;
+  var _ae=document.getElementById('adEnter');if(_ae)_ae.dataset.xzBound_onclick='';
+  window.__xzBind(_ae,'onclick',xzEnterAdmin);
   $('#xzReview').onclick=function(e){e.stopPropagation();closeOther();open('review','审 核')};
   $('#xzNotice').onclick=function(e){e.stopPropagation();closeOther();open('notice','通 知')};
   $('#xzConsole').onclick=function(e){e.stopPropagation();location.href='./console.html'};
@@ -2586,11 +2595,12 @@ body.immerse #xzBar,body.immerse #xzModal{display:none!important}
   var addEl=document.getElementById('add');
   if(addEl){
     var _origAdd=addEl.onclick;
-    addEl.onclick=function(e){
+    addEl.dataset.xzBound_onclick='';
+    window.__xzBind(addEl,'onclick',function(e){
       if(XZ.globalMute){e.stopPropagation();toast('暂时无法投星');return}
       if(XZ.muted){e.stopPropagation();toast('该账号已被禁言');return}
       if(_origAdd)_origAdd.call(this,e);
-    };
+    });
   }
 
   /* 「我 的」只显示自己写的，并标明未审核 / 已点亮，不再混进别人的星 */
@@ -2599,7 +2609,7 @@ body.immerse #xzBar,body.immerse #xzModal{display:none!important}
     box.innerHTML='<div class="none">读取中…</div>';
     api('GET','/mine').then(function(r){
       var list=r.wishes||[];
-      num.textContent='共 写 了 '+list.length+' 颗';
+      num.textContent='共 '+(typeof r.total==='number'?r.total:list.length)+' 条';
       if(!list.length){box.innerHTML='<div class="none">还没有你的星星</div>';return}
       box.innerHTML=list.slice(0,200).map(function(w){
         return '<div class="it"><div class="bd">'+
@@ -2611,13 +2621,15 @@ body.immerse #xzBar,body.immerse #xzModal{display:none!important}
       }).join('');
     }).catch(function(e){box.innerHTML='<div class="none">'+esc(e.message)+'</div>'});
   };
-  document.getElementById('mineList').addEventListener('click',function(e){
+  window.__xzBind(document.getElementById('mineList'),'click',function(e){
     var b=e.target.closest?e.target.closest('.xz-del'):null;if(!b)return;
     e.stopPropagation();
+    if(b.__busy)return;
     if(!confirm('确定删除这颗祝福星？'))return;
+    b.__busy=true;
     api('POST','/mine',{id:b.dataset.id,action:'delete'}).then(function(){
-      toast('已删除');renderMine();try{hardReload()}catch(err){}
-    }).catch(function(err){toast(err.message)});
+      b.__busy=false;toast('已删除');renderMine();try{hardReload()}catch(err){}
+    }).catch(function(err){b.__busy=false;toast(err.message)});
   });
 })();
 </script>
