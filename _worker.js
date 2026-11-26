@@ -42,9 +42,10 @@ function cookies(req) {
 }
 function setCookie(name, val, req, age) {
   const https = new URL(req.url).protocol === 'https:';
-  /* age=null → 会话 cookie（游客退出重进清空）；age>0 → 持久（已登录账号不掉线） */
+  /* age=null → 会话 cookie（不写 Max-Age，关浏览器就没）；
+     age>0 → 持久（已登录账号不掉线）；age===0 → 必须写出 Max-Age=0 才能真清掉 */
   const parts = [name + '=' + encodeURIComponent(val), 'HttpOnly', 'SameSite=Lax', 'Path=/'];
-  if (age) parts.push('Max-Age=' + age);
+  if (age !== null && age !== undefined) parts.push('Max-Age=' + age);
   if (https) parts.push('Secure');
   return parts.join('; ');
 }
@@ -565,10 +566,29 @@ export async function handleApi(request, env) {
       return withCookie(json({ user: { id: u.id, email: u.email, name: u.name, is_admin: Number(u.is_admin) === 1 } }), setCookie('xz_sid', s.token, request, 31536000));
     }
 
-    if (path === '/logout' && m === 'POST') {
+    /* ===== 游客一次性：每次进入页面都换一张新身份牌 =====
+       只换「没登录」的；登录账号按 user_id 走，跨设备/关浏览器都不受影响。
+       旧 session 行不删（避免和正在提交的写请求抢），但浏览器 cookie 已被覆盖，
+       再也不会带着旧牌回来 —— 老祝福仍留在 wishes 表里，审核看得到、通过照常亮。 */
+    if (path === '/visitor/new' && m === 'POST') {
       const s = await session(env, request);
-      if (s) await env.DB.prepare('UPDATE sessions SET user_id=NULL,role=? WHERE token=?').bind('visitor', s.token).run();
-      return json({ ok: true });
+      if (s && s.user_id) return json({ ok: true, guest: false });
+      /* 旧游客牌直接作废：就算哪台设备还揣着旧 cookie，也认不回任何记录 */
+      if (s) await env.DB.prepare('DELETE FROM sessions WHERE token=? AND user_id IS NULL').bind(s.token).run();
+      const t = rnd(24);
+      await env.DB.prepare('INSERT INTO sessions (token,user_id,role,created_at) VALUES (?,NULL,?,?)')
+        .bind(t, 'visitor', Date.now()).run();
+      return withCookie(json({ ok: true, guest: true }), setCookie('xz_sid', t, request, null));
+    }
+
+    if (path === '/logout' && m === 'POST') {
+      /* 点「退 出」也当离开：连登录绑定一起断，回来是全新游客 */
+      const s = await session(env, request);
+      if (s) await env.DB.prepare('DELETE FROM sessions WHERE token=?').bind(s.token).run();
+      const t = rnd(24);
+      await env.DB.prepare('INSERT INTO sessions (token,user_id,role,created_at) VALUES (?,NULL,?,?)')
+        .bind(t, 'visitor', Date.now()).run();
+      return withCookie(json({ ok: true }), setCookie('xz_sid', t, request, null));
     }
 
     if (path === '/admin/login' && m === 'POST') {
@@ -589,7 +609,7 @@ export async function handleApi(request, env) {
     /* ===== 「我的祝福」：可编辑 / 删除，改后重新审核 ===== */
     if (path === '/mine' && m === 'GET') {
       const s = await session(env, request);
-      if (!s) return json({ wishes: [] });
+      if (!s) return json({ wishes: [], total: 0 });
       const u = await me(env, request);
       const sel = 'SELECT id,text,name,photo,status,created_at FROM wishes ';
       const r = u

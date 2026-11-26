@@ -194,4 +194,34 @@ window.addEventListener('online',function(){
   if(P.loaded<P.total&&document.getElementById('allPanel').className.indexOf('on')>=0)
     loadPage(P.page+1,false);
 });
+
+/* ── 7. 游客一次性 ──
+   只要离开过这个页面（关标签 / 刷新 / 从后台恢复 / 切出去再回来 / 点退出），
+   回来就是全新游客：「我 的」一条不留。登录账号由后端判断，完全不受影响。
+   草稿 DRAFT 不擦（写一半刷新字还在），只擦「这几颗是我写的」那几把钥匙。 */
+var XZ_GUEST_KEYS=['xingzhou_myids_v1','xz_cache_v1','xz_last_n'];
+function xzWipeGuest(){
+  for(var i=0;i<XZ_GUEST_KEYS.length;i++){
+    try{localStorage.removeItem(XZ_GUEST_KEYS[i])}catch(e){}
+  }
+}
+var xzGuestBusy=false,xzHiddenAt=0;
+function xzNewGuest(){
+  if(xzGuestBusy)return;
+  xzGuestBusy=true;
+  xzWipeGuest();                       /* 先擦本地小本本，列表不再把旧星高亮成「我的」 */
+  fetch('/api/visitor/new',{method:'POST',credentials:'same-origin',
+    headers:{'Content-Type':'application/json'},body:'{}'})
+   .then(function(r){return r.json()})
+   .then(function(){try{if(window.renderMine)window.renderMine()}catch(e){}})
+   .catch(function(){/* 弱网：本地已清，下次进来还会再换，绝不白屏 */})
+   .then(function(){xzGuestBusy=false});
+}
+xzNewGuest();                                                  /* 每次打开 / 刷新：必换 */
+window.addEventListener('pageshow',function(e){if(e.persisted)xzNewGuest()});  /* 浏览器「返回」恢复也换 */
+document.addEventListener('visibilitychange',function(){
+  if(document.hidden){xzHiddenAt=Date.now();return}
+  if(xzHiddenAt&&Date.now()-xzHiddenAt>=800)xzNewGuest();      /* 切出去过 = 离开过页面 */
+  xzHiddenAt=0;
+});
 })();
