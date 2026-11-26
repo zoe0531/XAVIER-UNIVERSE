@@ -52,6 +52,7 @@ function setCookie(name, val, req, age) {
 const clearCookie = (n, req) => setCookie(n, '', req, 0);
 /* ===== v7 分页改造常量 ===== */
 const PAGE_SIZE = 24;                 // 每页条数（唯一可配常量）
+const LAYOUT_VER = 3;                 // 分片排序口径：1/2=旧升序残留，3=整体 63→1 最新在前（现行）
 const MAX_TEXT = 2000;                // 文本长度上限
 const MAX_IMG_B64 = 2800000;          // 单图 base64 上限 ≈2MB
 const MAX_THUMB_B64 = 400000;         // 缩略图上限
@@ -238,9 +239,17 @@ async function backfill(env) {
   } catch (e) {}
 }
 async function ensureIndex(env) {
+  /* 排序口径升级（最老在前 → 最新在前）：只做一次，bump ver 让 CDN 与 D1 旧分片一起失效，
+     不删 wishes、不改 id/status，老祝福一条不少。 */
+  let ver = Number(await getMeta(env, 'pages_ver', '0')) || 0;
+  if (Number(await getMeta(env, 'layout_ver', '1')) !== LAYOUT_VER) {
+    ver += 1;
+    await setMeta(env, 'pages_ver', String(ver));
+    await setMeta(env, 'layout_ver', String(LAYOUT_VER));
+    try { await env.DB.prepare('DELETE FROM wish_pages').run(); } catch (e) {}
+  }
   const c = await env.DB.prepare("SELECT COUNT(*) AS n FROM wishes WHERE status='approved'").bind().first();
   const total = Number((c && c.n) || 0);
-  const ver = Number(await getMeta(env, 'pages_ver', '0')) || 0;
   return { total: total, pages: Math.ceil(total / PAGE_SIZE), ver: ver, size: PAGE_SIZE };
 }
 async function markDirty(env) {
@@ -262,8 +271,10 @@ function listItem(r) {
 }
 async function buildPage(env, n, ver) {
   const rows = (await env.DB.prepare(
-    "SELECT id,name,photo,summary,text,created_at FROM wishes WHERE status='approved' ORDER BY id ASC LIMIT ? OFFSET ?"
+    "SELECT id,name,photo,summary,text,created_at FROM wishes WHERE status='approved' ORDER BY id DESC LIMIT ? OFFSET ?"
   ).bind(PAGE_SIZE, (n - 1) * PAGE_SIZE).all()).results || [];
+  /* 双保险：页内严格编号递减，避免任何旧口径分片/驱动返回升序 */
+  rows.sort((a, b) => Number(b.id) - Number(a.id));
   const items = rows.map(listItem);
   await env.DB.prepare(
     'INSERT INTO wish_pages(page_no,ver,data) VALUES(?,?,?) ON CONFLICT(page_no) DO UPDATE SET ver=excluded.ver,data=excluded.data'
@@ -326,6 +337,9 @@ export async function handleApi(request, env) {
       let items;
       if (cached && Number(cached.ver) === idx.ver && cached.data) {
         try { items = (JSON.parse(cached.data).items) || []; } catch (e) { items = null; }
+        /* 旧包残留的「升序」分片即使版本号相同也要作废，重建为 63→…→1 */
+        if (items && items.length > 1 &&
+            Number(items[0].id) < Number(items[items.length - 1].id)) items = null;
       }
       if (!items) items = await buildPage(env, pn, idx.ver);
       return json({ page: pn, items: items, total: idx.total, pages: idx.pages, ver: idx.ver, size: PAGE_SIZE }, 200, { 'Cache-Control': CACHE_PAGE });

@@ -131,7 +131,11 @@ function loadPage(n,reset){
     P.busy=false;
     P.total=Number(d.total)||P.total;P.pages=Number(d.pages)||P.pages;
     if(reset){P.items=[];P.loaded=0}
-    var add=(d.items||[]).slice().reverse();   /* 每页内最新在前，页间按加载顺序追加 */
+    /* 服务端已按 id DESC 给页：本页由大到小，下一页接着更小，
+       追加后整体仍是 63→…→1 连续递减，第 1 颗永远在最下面。不要再 reverse。 */
+    var add=(d.items||[]).slice();
+    /* 保险：无论拿到哪一代分片，都按编号由大到小排，页间追加后整体仍是 63→…→1 */
+    add.sort(function(a,b){return Number(b.id)-Number(a.id)});
     P.items=P.items.concat(add);P.loaded=P.items.length;P.page=n;
     draw(box,num);
   }).catch(function(){
